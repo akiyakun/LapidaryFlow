@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 r"""
-stream_copy_cut.py
+segment_tool.py
 
-ffmpeg の stream copy (-c copy) で長尺動画を分割し、外部ツール(Topaz等)で処理した後に
-フレーム単位で再結合するためのツール。
+長尺動画を分割し、外部ツール(Topaz等)で処理した後にフレーム単位で再結合するためのツール。
 
 カット位置はまず近傍のシーンチェンジに寄せ、次に最寄りのキーフレームにスナップされる。
 さらに前後に handle 秒分の余分なフレーム(参照用ののりしろ)を付けて切る。時間軸を見るAI
@@ -19,10 +18,10 @@ ffmpeg の stream copy (-c copy) で長尺動画を分割し、外部ツール(T
 
 例:
     # 15分ごとに自動分割(シーン整列 + 前後5秒ののりしろ)
-    python stream_copy_cut.py cut --source "The Mask.mp4" --output-dir ".\cut"
+    python segment_tool.py cut --source "The Mask.mp4" --output-dir ".\cut"
 
     # TopazでProRes出力した後、のりしろを除いてロスレス結合
-    python stream_copy_cut.py join ^
+    python segment_tool.py join ^
       --manifest ".\cut\segment_plan.json" ^
       --processed-dir ".\upscaled" ^
       --output ".\final.mov" --copy
