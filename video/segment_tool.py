@@ -20,6 +20,9 @@ segment_tool.py
     # 15分ごとに自動分割(シーン整列 + 前後5秒ののりしろ)
     python segment_tool.py cut --source "The Mask.mp4" --output-dir ".\cut"
 
+    # 非スクエアピクセル素材をスクエアピクセル化してProRes 422で分割
+    python segment_tool.py cut --source "anamorphic.mkv" --output-dir ".\cut" --square-pixel
+
     # TopazでProRes出力した後、のりしろを除いてロスレス結合
     python segment_tool.py join ^
       --manifest ".\cut\segment_plan.json" ^
@@ -43,6 +46,11 @@ from pathlib import Path
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".m4v", ".avi", ".webm", ".ts", ".m2ts"}
 
 DEFAULT_ENCODE_ARGS = "-c:v libx264 -preset slow -crf 14 -pix_fmt yuv420p"
+
+PRORES_ARGS = [
+    "-c:v", "prores_ks", "-profile:v", "2",
+    "-pix_fmt", "yuv422p10le", "-vendor", "apl0",
+]
 
 
 def run(cmd: list[str], capture: bool = False) -> str:
@@ -124,6 +132,50 @@ def probe_frames(source: Path) -> tuple[list[float], list[int]]:
     if not key_idx:
         raise RuntimeError(f"キーフレームを検出できませんでした: {source}")
     return pts, key_idx
+
+
+def probe_video_info(source: Path) -> tuple[int, int, Fraction]:
+    """映像の幅・高さ・サンプルアスペクト比(SAR)を返す。"""
+    out = run([
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,sample_aspect_ratio",
+        "-of", "default=noprint_wrappers=1",
+        str(source),
+    ], capture=True)
+
+    fields: dict[str, str] = {}
+    for line in out.splitlines():
+        key, _, value = line.strip().partition("=")
+        if key:
+            fields[key] = value
+
+    try:
+        width = int(fields["width"])
+        height = int(fields["height"])
+    except (KeyError, ValueError):
+        raise RuntimeError(f"解像度を取得できませんでした: {source}")
+
+    sar_text = fields.get("sample_aspect_ratio", "")
+    num, _, den = sar_text.partition(":")
+    try:
+        sar = Fraction(int(num), int(den))
+    except (ValueError, ZeroDivisionError):
+        # "N/A" や "0:1" は SAR 未指定 = スクエアピクセル扱い
+        sar = Fraction(1)
+    if sar <= 0:
+        sar = Fraction(1)
+
+    return width, height, sar
+
+
+def square_pixel_size(width: int, height: int, sar: Fraction) -> tuple[int, int]:
+    """表示アスペクト比を保ったままSAR=1にする解像度。縮小せず引き伸ばす側に合わせる。"""
+    if sar > 1:
+        w, h = width * sar, Fraction(height)
+    else:
+        w, h = Fraction(width), height / sar
+    return 2 * round(w / 2), 2 * round(h / 2)
 
 
 def frame_duration(pts: list[float]) -> float:
@@ -312,6 +364,7 @@ def do_cut(
     align: str = "scene",
     scene_threshold: float = 0.35,
     scene_window: float = 30.0,
+    square_pixel: bool = False,
     verify: bool = True,
 ) -> Path:
     require_tools()
@@ -329,6 +382,21 @@ def do_cut(
         f"{source.name}  {fmt_time(duration)}  "
         f"{n} frames  {len(key_idx)} keyframes\n"
     )
+
+    scale_filter = ""
+    if square_pixel:
+        width, height, sar = probe_video_info(source)
+        if sar == 1:
+            print("SAR は 1:1 です。変換不要なのでストリームコピーで分割します。\n")
+            square_pixel = False
+        else:
+            new_w, new_h = square_pixel_size(width, height, sar)
+            scale_filter = f"scale={new_w}:{new_h}:flags=lanczos,setsar=1"
+            print(
+                f"=== square pixel ===\n"
+                f"{width}x{height} (SAR {sar.numerator}:{sar.denominator}) "
+                f"-> {new_w}x{new_h} (SAR 1:1), ProRes 422 で再エンコードします\n"
+            )
 
     cut_times = build_cuts(duration, cuts_text, chunk, parts)
     if not cut_times:
@@ -377,7 +445,7 @@ def do_cut(
         raise RuntimeError("スナップ後に有効なカット位置が残りませんでした。")
 
     stem = source.stem
-    ext = source.suffix
+    ext = ".mov" if square_pixel else source.suffix
 
     print(f"\n=== cut (video only, handle {handle:.2f}s) ===")
 
@@ -396,19 +464,33 @@ def do_cut(
         name = f"{stem}-seg{i + 1:02d}-{fmt_time(pts[keep_start])}{ext}"
         dst = output_dir / name
 
-        # backward seekが確実に cut_start のキーフレームに着地するよう半フレーム後ろを指す
-        ss = pts[cut_start] + fdur * 0.5
-        run([
-            "ffmpeg", "-hide_banner", "-loglevel", "warning",
-            "-noaccurate_seek",
-            "-ss", f"{ss:.6f}",
-            "-i", str(source),
-            "-map", "0:v:0",
-            "-c", "copy",
-            "-frames:v", str(seg_frames),
-            "-avoid_negative_ts", "make_zero",
-            "-y", str(dst),
-        ])
+        if square_pixel:
+            # accurate seekは ss 以降の最初のフレームを出すので、半フレーム手前を指す
+            ss = max(0.0, pts[cut_start] - fdur * 0.5)
+            run([
+                "ffmpeg", "-hide_banner", "-loglevel", "warning", "-stats",
+                "-ss", f"{ss:.6f}",
+                "-i", str(source),
+                "-map", "0:v:0",
+                "-vf", scale_filter,
+                "-frames:v", str(seg_frames),
+                *PRORES_ARGS,
+                "-y", str(dst),
+            ])
+        else:
+            # backward seekが確実に cut_start のキーフレームに着地するよう半フレーム後ろを指す
+            ss = pts[cut_start] + fdur * 0.5
+            run([
+                "ffmpeg", "-hide_banner", "-loglevel", "warning",
+                "-noaccurate_seek",
+                "-ss", f"{ss:.6f}",
+                "-i", str(source),
+                "-map", "0:v:0",
+                "-c", "copy",
+                "-frames:v", str(seg_frames),
+                "-avoid_negative_ts", "make_zero",
+                "-y", str(dst),
+            ])
 
         actual = count_frames(dst)
         if actual != seg_frames:
@@ -417,7 +499,9 @@ def do_cut(
                 f"(expected {seg_frames}, got {actual})"
             )
 
-        if verify and first_frame_hash(dst) != first_frame_hash(source, pts[cut_start]):
+        # 再エンコード時はピクセル値が変わるのでハッシュ照合はできない
+        if verify and not square_pixel and \
+                first_frame_hash(dst) != first_frame_hash(source, pts[cut_start]):
             raise RuntimeError(
                 f"{name}: 先頭フレームが source frame {cut_start} と一致しません。"
             )
@@ -445,6 +529,7 @@ def do_cut(
         "frame_duration": fdur,
         "handle_seconds": handle,
         "align": align,
+        "square_pixel": square_pixel,
         "segments": segments,
     }
     manifest_path = output_dir / "segment_plan.json"
@@ -613,6 +698,9 @@ def main() -> int:
                        help="カット位置を近傍キーフレームに合わせる (default: nearest)")
     p_cut.add_argument("--snap-tolerance", type=float, default=0.0,
                        help="許容するズレ秒数。超えたらエラー。0で無制限 (default: 0)")
+    p_cut.add_argument("--square-pixel", action="store_true",
+                       help="SARが1:1でない場合、スクエアピクセルに変換して"
+                            "ProRes 422で出力する(再エンコード)")
     p_cut.add_argument("--no-verify", action="store_true",
                        help="先頭フレームの照合をスキップする")
 
@@ -643,6 +731,7 @@ def main() -> int:
                 align=args.align,
                 scene_threshold=args.scene_threshold,
                 scene_window=args.scene_window,
+                square_pixel=args.square_pixel,
                 verify=not args.no_verify,
             )
         else:
