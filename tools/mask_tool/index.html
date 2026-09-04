@@ -67,6 +67,7 @@
       <div>右<br><input id="padR" type="number" value="64" min="0"></div>
       <div>下<br><input id="padB" type="number" value="64" min="0"></div>
     </div>
+    <label><input id="snap8" type="checkbox" checked style="width:auto"> crop の W/H を 8 の倍数にする（ProPainter の内部リサイズを避ける）</label>
 
     <h2>選択結果</h2>
     <div id="info">画像を読み込んでください。</div>
@@ -131,13 +132,19 @@ let maskRect = null;
 let dragStart = null;
 let hover = null;
 let srcHandle = null;
-let ranges = [];
+let ranges = loadRanges();
 const rangeName = document.getElementById('rangeName');
 const rangeStart = document.getElementById('rangeStart');
 const rangeEnd = document.getElementById('rangeEnd');
 const rangeList = document.getElementById('rangeList');
 const rangeCommands = document.getElementById('rangeCommands');
 const rangeNote = document.getElementById('rangeNote');
+const snap8 = document.getElementById('snap8');
+
+function loadRanges(){
+  try{ const v=JSON.parse(localStorage.getItem('maskToolRanges')||'[]'); return Array.isArray(v)?v:[]; }
+  catch(e){ return []; }
+}
 
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
 function getCrop(){
@@ -147,7 +154,16 @@ function getCrop(){
   let y = clamp(maskRect.y-t,0,img.naturalHeight);
   let x2 = clamp(maskRect.x+maskRect.w+r,0,img.naturalWidth);
   let y2 = clamp(maskRect.y+maskRect.h+b,0,img.naturalHeight);
-  return {x,y,w:x2-x,h:y2-y};
+  let c = {x,y,w:x2-x,h:y2-y};
+  if(snap8.checked) c = snapCrop8(c);
+  return c;
+}
+// ProPainter は 8 の倍数でないサイズを縮小→拡大して戻すため、あらかじめ 8 の倍数に広げる
+function snapCrop8(c){
+  const W=img.naturalWidth, H=img.naturalHeight;
+  const w=Math.min(Math.ceil(c.w/8)*8, Math.floor(W/8)*8);
+  const h=Math.min(Math.ceil(c.h/8)*8, Math.floor(H/8)*8);
+  return {x:clamp(c.x,0,W-w), y:clamp(c.y,0,H-h), w, h};
 }
 function draw(){
   if(!img.src) return;
@@ -245,6 +261,7 @@ canvas.addEventListener('pointermove',e=>{
 canvas.addEventListener('pointerleave',()=>{ hover=null; draw(); });
 canvas.addEventListener('pointerup',e=>{ dragStart=null; });
 pads.forEach(p=>p.addEventListener('input',draw));
+snap8.addEventListener('change',draw);
 
 document.getElementById('copyCrop').onclick=async()=>{ if(!maskRect)return; await navigator.clipboard.writeText(cropCmd.textContent); };
 document.getElementById('reset').onclick=()=>{maskRect=null;draw();};
@@ -254,6 +271,8 @@ function safeName(s){
   return v || 'segment';
 }
 
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
 function makeMaskCanvas(rect,crop){
   const m=document.createElement('canvas'); m.width=crop.w; m.height=crop.h;
   const x=m.getContext('2d'); x.fillStyle='black'; x.fillRect(0,0,m.width,m.height);
@@ -262,6 +281,7 @@ function makeMaskCanvas(rect,crop){
 }
 
 function renderRanges(){
+  localStorage.setItem('maskToolRanges', JSON.stringify(ranges));
   if(!ranges.length){
     rangeList.innerHTML='<div class="hint">まだ区間はありません。</div>';
     rangeCommands.textContent='-';
@@ -273,9 +293,14 @@ function renderRanges(){
   for(const [i,r] of ranges.entries()){
     const item=document.createElement('div'); item.className='range-item';
     const desc=document.createElement('div');
-    desc.innerHTML=`<b>${r.name}</b><div class="meta">frame ${r.start}〜${r.end} / mask ${r.rect.w}×${r.rect.h} @ ${r.rect.x},${r.rect.y} / crop ${r.crop.w}×${r.crop.h} @ ${r.crop.x},${r.crop.y}</div>`;
+    desc.innerHTML=`<b>${esc(r.name)}</b><div class="meta">frame ${r.start}〜${r.end} / mask ${r.rect.w}×${r.rect.h} @ ${r.rect.x},${r.rect.y} / crop ${r.crop.w}×${r.crop.h} @ ${r.crop.x},${r.crop.y}</div>`;
     const restore=document.createElement('button'); restore.textContent='選択を復元';
-    restore.onclick=()=>{ maskRect={...r.rect}; pads[0].value=r.pad[0]; pads[1].value=r.pad[1]; pads[2].value=r.pad[2]; pads[3].value=r.pad[3]; draw(); };
+    restore.onclick=()=>{
+      maskRect={...r.rect};
+      pads[0].value=r.pad[0]; pads[1].value=r.pad[1]; pads[2].value=r.pad[2]; pads[3].value=r.pad[3];
+      rangeName.value=r.name; rangeStart.value=String(r.start); rangeEnd.value=String(r.end);
+      draw();
+    };
     const save=document.createElement('button'); save.textContent='mask保存';
     save.onclick=()=>saveCanvas(makeMaskCanvas(r.rect,r.crop),`${safeName(r.name)}_crop_mask.png`);
     const del=document.createElement('button'); del.textContent='削除';
@@ -286,17 +311,34 @@ function renderRanges(){
   const cmds=[];
   for(const r of ranges){
     const n=safeName(r.name);
-    cmds.push(`# ${r.name}  frame ${r.start}〜${r.end}`);
-    cmds.push(`mkdir input\${n}\crop_frames`);
-    cmds.push(`ffmpeg -i inputs\test.mov -vf "select='between(n,${r.start},${r.end})',crop=${r.crop.w}:${r.crop.h}:${r.crop.x}:${r.crop.y}" -vsync 0 input\${n}\crop_frames\%%08d.png`);
+    cmds.push(`rem === ${r.name}  frame ${r.start}-${r.end} ===`);
+    cmds.push(`mkdir input\\${n}_frames`);
+    cmds.push(`ffmpeg -i inputs\\test.mov -vf "select='between(n,${r.start},${r.end})',crop=${r.crop.w}:${r.crop.h}:${r.crop.x}:${r.crop.y}" -fps_mode passthrough input\\${n}_frames\\%%08d.png`);
     cmds.push(`python inference_propainter.py ^`);
-    cmds.push(`--video input\${n}\crop_frames ^`);
-    cmds.push(`--mask input\${n}\${n}_crop_mask.png ^`);
-    cmds.push(`--fp16`);
+    cmds.push(`--video input\\${n}_frames ^`);
+    cmds.push(`--mask input\\${n}_crop_mask.png ^`);
+    cmds.push(`--save_frames --fp16`);
+    cmds.push(`ffmpeg -i inputs\\test.mov -framerate %FPS% -start_number 0 -i results\\${n}_frames\\frames\\%%04d.png ^`);
+    cmds.push(`-filter_complex "[0:v]select='between(n,${r.start},${r.end})',setpts=N/FRAME_RATE/TB[b];[b][1:v]overlay=${r.crop.x}:${r.crop.y}:eof_action=pass" ^`);
+    cmds.push(`-an -c:v prores_ks -profile:v 3 ${n}.mov`);
     cmds.push('');
   }
+  cmds.push('rem === 連結して音声を戻す ===');
+  cmds.push('rem video\\segment_join.bat で ' + ranges.map(r=>safeName(r.name)+'.mov').join(' + ') + ' を連結し、');
+  cmds.push('rem video\\merge_tracks.py で元動画の音声/字幕を結合する。');
   rangeCommands.textContent=cmds.join('\n').trim();
-  rangeNote.innerHTML='<div class="ok">左上 / 右上のように位置が離れている場合は、各区間を別cropで処理する方が高速です。</div>';
+
+  const issues=[];
+  for(let i=1;i<ranges.length;i++){
+    const prev=ranges[i-1], cur=ranges[i];
+    if(cur.start<=prev.end) issues.push(`${esc(prev.name)} と ${esc(cur.name)} のフレームが重複しています (${cur.start} ≦ ${prev.end})`);
+    else if(cur.start>prev.end+1) issues.push(`${esc(prev.name)} と ${esc(cur.name)} の間に未処理フレーム ${prev.end+1}〜${cur.start-1} があります`);
+  }
+  const odd=ranges.filter(r=>r.crop.w%8 || r.crop.h%8).map(r=>esc(r.name));
+  if(odd.length) issues.push(`crop サイズが 8 の倍数でない区間: ${odd.join(', ')}（ProPainter 内部で縮小→拡大が入ります）`);
+  rangeNote.innerHTML = issues.length
+    ? `<div class="warn">${issues.join('<br>')}</div>`
+    : '<div class="ok">区間の連続性 OK。%FPS% は元動画のフレームレートに置き換えてください。</div>';
 }
 
 document.getElementById('addRange').onclick=()=>{
