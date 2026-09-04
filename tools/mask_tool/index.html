@@ -31,6 +31,16 @@
   .toolbar{display:flex;justify-content:flex-end;gap:.5rem;align-items:center}
   #drop{border:2px dashed var(--border);border-radius:6px;padding:.8rem;margin:.3rem 0;color:var(--muted);background:var(--surface);cursor:pointer}
   #drop.over{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
+
+  .range-box{margin-top:1rem;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface)}
+  .range-row{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:8px;align-items:end}
+  .range-row input{width:100%;box-sizing:border-box}
+  .range-list{margin-top:.75rem;display:flex;flex-direction:column;gap:6px}
+  .range-item{display:grid;grid-template-columns:1fr auto auto auto;gap:6px;align-items:center;padding:8px;border:1px solid var(--border);border-radius:5px;background:var(--bg)}
+  .range-item .meta{font-size:.9rem;color:var(--muted)}
+  .warn{margin-top:.6rem;padding:.55rem .7rem;border-left:3px solid #d9a441;background:color-mix(in srgb,var(--surface) 85%,#d9a441 15%)}
+  .ok{margin-top:.6rem;padding:.55rem .7rem;border-left:3px solid #4caf50;background:color-mix(in srgb,var(--surface) 85%,#4caf50 15%)}
+
 </style>
 </head>
 <body>
@@ -69,6 +79,23 @@
     <button id="downloadFullMask">1280等の元サイズ mask.png を保存</button>
     <button id="reset">選択をリセット</button>
 
+    <div class="range-box">
+      <h2 style="margin-top:0">位置切替 / 区間</h2>
+      <p class="hint">ロゴ位置が途中で変わる場合、現在の赤枠をフレーム区間として登録できます。区間ごとに別 crop で処理する方法を推奨します。</p>
+      <div class="range-row">
+        <div><label>名前</label><input id="rangeName" type="text" value="segment_01"></div>
+        <div><label>開始フレーム</label><input id="rangeStart" type="number" value="0" min="0"></div>
+        <div><label>終了フレーム</label><input id="rangeEnd" type="number" value="299" min="0"></div>
+        <button id="addRange">現在の選択を追加</button>
+      </div>
+      <div id="rangeList" class="range-list"><div class="hint">まだ区間はありません。</div></div>
+      <button id="saveRangeMasks">区間別 crop_mask をフォルダ保存</button>
+      <button id="copyRangeCommands">区間別コマンドをコピー</button>
+      <div id="rangeNote" class="hint"></div>
+      <h3>区間別コマンド</h3>
+      <pre id="rangeCommands">-</pre>
+    </div>
+
     <h3>使い方</h3>
     <pre>ffmpeg -i inputs\test.mov -vf "crop=W:H:X:Y" input\crop_frames\%%08d.png
 
@@ -104,6 +131,13 @@ let maskRect = null;
 let dragStart = null;
 let hover = null;
 let srcHandle = null;
+let ranges = [];
+const rangeName = document.getElementById('rangeName');
+const rangeStart = document.getElementById('rangeStart');
+const rangeEnd = document.getElementById('rangeEnd');
+const rangeList = document.getElementById('rangeList');
+const rangeCommands = document.getElementById('rangeCommands');
+const rangeNote = document.getElementById('rangeNote');
 
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
 function getCrop(){
@@ -215,6 +249,89 @@ pads.forEach(p=>p.addEventListener('input',draw));
 document.getElementById('copyCrop').onclick=async()=>{ if(!maskRect)return; await navigator.clipboard.writeText(cropCmd.textContent); };
 document.getElementById('reset').onclick=()=>{maskRect=null;draw();};
 
+function safeName(s){
+  const v=(s||'segment').trim().replace(/[^a-zA-Z0-9_-]+/g,'_');
+  return v || 'segment';
+}
+
+function makeMaskCanvas(rect,crop){
+  const m=document.createElement('canvas'); m.width=crop.w; m.height=crop.h;
+  const x=m.getContext('2d'); x.fillStyle='black'; x.fillRect(0,0,m.width,m.height);
+  x.fillStyle='white'; x.fillRect(rect.x-crop.x, rect.y-crop.y, rect.w, rect.h);
+  return m;
+}
+
+function renderRanges(){
+  if(!ranges.length){
+    rangeList.innerHTML='<div class="hint">まだ区間はありません。</div>';
+    rangeCommands.textContent='-';
+    rangeNote.textContent='';
+    return;
+  }
+  ranges.sort((a,b)=>a.start-b.start);
+  rangeList.innerHTML='';
+  for(const [i,r] of ranges.entries()){
+    const item=document.createElement('div'); item.className='range-item';
+    const desc=document.createElement('div');
+    desc.innerHTML=`<b>${r.name}</b><div class="meta">frame ${r.start}〜${r.end} / mask ${r.rect.w}×${r.rect.h} @ ${r.rect.x},${r.rect.y} / crop ${r.crop.w}×${r.crop.h} @ ${r.crop.x},${r.crop.y}</div>`;
+    const restore=document.createElement('button'); restore.textContent='選択を復元';
+    restore.onclick=()=>{ maskRect={...r.rect}; pads[0].value=r.pad[0]; pads[1].value=r.pad[1]; pads[2].value=r.pad[2]; pads[3].value=r.pad[3]; draw(); };
+    const save=document.createElement('button'); save.textContent='mask保存';
+    save.onclick=()=>saveCanvas(makeMaskCanvas(r.rect,r.crop),`${safeName(r.name)}_crop_mask.png`);
+    const del=document.createElement('button'); del.textContent='削除';
+    del.onclick=()=>{ ranges.splice(i,1); renderRanges(); };
+    item.append(desc,restore,save,del); rangeList.appendChild(item);
+  }
+
+  const cmds=[];
+  for(const r of ranges){
+    const n=safeName(r.name);
+    cmds.push(`# ${r.name}  frame ${r.start}〜${r.end}`);
+    cmds.push(`mkdir input\${n}\crop_frames`);
+    cmds.push(`ffmpeg -i inputs\test.mov -vf "select='between(n,${r.start},${r.end})',crop=${r.crop.w}:${r.crop.h}:${r.crop.x}:${r.crop.y}" -vsync 0 input\${n}\crop_frames\%%08d.png`);
+    cmds.push(`python inference_propainter.py ^`);
+    cmds.push(`--video input\${n}\crop_frames ^`);
+    cmds.push(`--mask input\${n}\${n}_crop_mask.png ^`);
+    cmds.push(`--fp16`);
+    cmds.push('');
+  }
+  rangeCommands.textContent=cmds.join('\n').trim();
+  rangeNote.innerHTML='<div class="ok">左上 / 右上のように位置が離れている場合は、各区間を別cropで処理する方が高速です。</div>';
+}
+
+document.getElementById('addRange').onclick=()=>{
+  if(!maskRect){ alert('先に画像上で白マスク範囲を選択してください。'); return; }
+  const start=Math.max(0,parseInt(rangeStart.value||'0',10));
+  const end=Math.max(0,parseInt(rangeEnd.value||'0',10));
+  if(end<start){ alert('終了フレームは開始フレーム以上にしてください。'); return; }
+  const c=getCrop();
+  const r={name:rangeName.value||`segment_${String(ranges.length+1).padStart(2,'0')}`,start,end,rect:{...maskRect},crop:{...c},pad:pads.map(p=>Math.max(0,parseInt(p.value||'0',10)))};
+  ranges.push(r);
+  rangeName.value=`segment_${String(ranges.length+1).padStart(2,'0')}`;
+  rangeStart.value=String(end+1);
+  rangeEnd.value=String(end+300);
+  renderRanges();
+};
+
+document.getElementById('copyRangeCommands').onclick=async()=>{
+  if(!ranges.length) return;
+  await navigator.clipboard.writeText(rangeCommands.textContent);
+};
+
+document.getElementById('saveRangeMasks').onclick=async()=>{
+  if(!ranges.length) return;
+  if(!window.showDirectoryPicker){
+    for(const r of ranges) await saveCanvas(makeMaskCanvas(r.rect,r.crop),`${safeName(r.name)}_crop_mask.png`);
+    return;
+  }
+  let dir; try{ dir=await window.showDirectoryPicker({mode:'readwrite'}); }catch(err){ if(err.name==='AbortError') return; throw err; }
+  for(const r of ranges){
+    const blob=await new Promise(res=>makeMaskCanvas(r.rect,r.crop).toBlob(res,'image/png'));
+    const fh=await dir.getFileHandle(`${safeName(r.name)}_crop_mask.png`,{create:true});
+    const w=await fh.createWritable(); await w.write(blob); await w.close();
+  }
+};
+
 async function saveCanvas(c,name){
   const blob=await new Promise(r=>c.toBlob(r,'image/png'));
   if(window.showSaveFilePicker){
@@ -239,6 +356,8 @@ document.getElementById('downloadMask').onclick=()=>{
   x.fillStyle='white'; x.fillRect(maskRect.x-c.x, maskRect.y-c.y, maskRect.w, maskRect.h);
   saveCanvas(m,'crop_mask.png');
 };
+
+renderRanges();
 
 document.getElementById('downloadFullMask').onclick=()=>{
   if(!maskRect)return;
