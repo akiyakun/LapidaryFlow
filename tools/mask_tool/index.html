@@ -5,41 +5,59 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>ProPainter Crop / Mask Helper</title>
 <style>
-  body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:20px;line-height:1.4}
-  .row{display:flex;gap:20px;flex-wrap:wrap}
+  :root{
+    --bg:#1e1e1e; --fg:#e6e6e6; --muted:#a8a8a8; --border:#4a4a4a;
+    --surface:#2a2a2a; --canvas-bg:#111; --accent:#4aa3ff; --accent-bg:#123a5c;
+  }
+  body.light{
+    --bg:#fff; --fg:#1a1a1a; --muted:#555; --border:#999;
+    --surface:#f3f3f3; --canvas-bg:#eee; --accent:#0a84ff; --accent-bg:#eaf4ff;
+  }
+  body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:20px;line-height:1.4;
+       background:var(--bg);color:var(--fg)}
+  .row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
   .panel{min-width:320px;max-width:520px}
-  canvas{border:1px solid #999;max-width:100%;height:auto;display:block;background:#111;cursor:crosshair}
+  .panel.preview{flex:1;max-width:none}
+  canvas{border:1px solid var(--border);max-width:100%;height:auto;display:block;background:var(--canvas-bg);cursor:crosshair}
   label{display:block;margin:.5rem 0 .2rem}
   input[type=number]{width:90px}
+  input,select,button{background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:.3rem}
   .grid{display:grid;grid-template-columns:repeat(4,minmax(70px,1fr));gap:8px}
-  button{margin:.35rem .25rem .35rem 0;padding:.5rem .8rem}
-  code,pre{background:#f3f3f3;padding:.2rem .35rem;border-radius:4px}
+  button{margin:.35rem .25rem .35rem 0;padding:.5rem .8rem;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  code,pre{background:var(--surface);padding:.2rem .35rem;border-radius:4px}
   pre{white-space:pre-wrap}
-  .hint{color:#555;font-size:.92rem}
+  .hint{color:var(--muted);font-size:.92rem}
+  .toolbar{display:flex;justify-content:flex-end;gap:.5rem;align-items:center}
+  #drop{border:2px dashed var(--border);border-radius:6px;padding:.8rem;margin:.3rem 0;color:var(--muted);background:var(--surface);cursor:pointer}
+  #drop.over{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
 </style>
 </head>
 <body>
-<h1>ProPainter Crop / Mask Helper</h1>
+<div class="toolbar">
+  <label for="theme" style="display:inline;margin:0">テーマ</label>
+  <select id="theme">
+    <option value="dark">ダーク</option>
+    <option value="light">ライト</option>
+  </select>
+</div>
+<h1>Mask Tool</h1>
 <p>1フレーム画像を読み込み、ドラッグで <b>白マスク範囲</b> を選択します。周囲余白から crop 範囲を自動計算し、FFmpeg用 crop 値と ProPainter用 mask.png を作れます。</p>
 
 <div class="row">
   <div class="panel">
     <label>フレーム画像</label>
+    <div id="drop">ここに画像ファイルをドラッグ＆ドロップ（またはクリックして選択）</div>
     <input id="file" type="file" accept="image/*" />
 
     <label>周囲余白 (px)</label>
     <div class="grid">
-      <div>左<br><input id="padL" type="number" value="48" min="0"></div>
-      <div>上<br><input id="padT" type="number" value="48" min="0"></div>
-      <div>右<br><input id="padR" type="number" value="48" min="0"></div>
-      <div>下<br><input id="padB" type="number" value="48" min="0"></div>
+      <div>左<br><input id="padL" type="number" value="64" min="0"></div>
+      <div>上<br><input id="padT" type="number" value="64" min="0"></div>
+      <div>右<br><input id="padR" type="number" value="64" min="0"></div>
+      <div>下<br><input id="padB" type="number" value="64" min="0"></div>
     </div>
 
-    <p class="hint">画像上でドラッグすると白マスク範囲を指定します。赤枠=白マスク、青枠=crop範囲。</p>
-    <canvas id="canvas"></canvas>
-  </div>
-
-  <div class="panel">
     <h2>選択結果</h2>
     <div id="info">画像を読み込んでください。</div>
 
@@ -59,10 +77,23 @@ python inference_propainter.py ^
 --mask input\crop_mask.png ^
 --fp16</pre>
   </div>
+
+  <div class="panel preview">
+    <h2>プレビュー</h2>
+    <p class="hint">画像上でドラッグすると白マスク範囲を指定します。赤枠=白マスク、青枠=crop範囲。</p>
+    <canvas id="canvas"></canvas>
+  </div>
 </div>
 
 <script>
+const theme = document.getElementById('theme');
+function applyTheme(v){ document.body.classList.toggle('light', v === 'light'); }
+theme.value = localStorage.getItem('maskToolTheme') || 'dark';
+applyTheme(theme.value);
+theme.addEventListener('change',()=>{ applyTheme(theme.value); localStorage.setItem('maskToolTheme', theme.value); });
+
 const file = document.getElementById('file');
+const drop = document.getElementById('drop');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const info = document.getElementById('info');
@@ -71,6 +102,8 @@ const pads = ['padL','padT','padR','padB'].map(id=>document.getElementById(id));
 let img = new Image();
 let maskRect = null;
 let dragStart = null;
+let hover = null;
+let srcHandle = null;
 
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
 function getCrop(){
@@ -86,6 +119,17 @@ function draw(){
   if(!img.src) return;
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.drawImage(img,0,0);
+  if(hover){
+    ctx.save();
+    ctx.lineWidth=Math.max(1,Math.round(img.naturalWidth/1280));
+    ctx.strokeStyle='rgba(160,160,160,.9)';
+    ctx.setLineDash([ctx.lineWidth*6, ctx.lineWidth*4]);
+    ctx.beginPath();
+    ctx.moveTo(hover.x,0); ctx.lineTo(hover.x,canvas.height);
+    ctx.moveTo(0,hover.y); ctx.lineTo(canvas.width,hover.y);
+    ctx.stroke();
+    ctx.restore();
+  }
   if(maskRect){
     const c=getCrop();
     ctx.lineWidth=Math.max(2,Math.round(img.naturalWidth/640));
@@ -111,25 +155,82 @@ function pos(e){
     y: clamp(Math.round((e.clientY-r.top)*canvas.height/r.height),0,canvas.height)
   };
 }
-file.addEventListener('change',()=>{
-  const f=file.files[0]; if(!f) return;
+function loadFile(f){
+  if(!f || !f.type.startsWith('image/')) return;
+  drop.textContent = f.name;
   const u=URL.createObjectURL(f);
   img.onload=()=>{canvas.width=img.naturalWidth; canvas.height=img.naturalHeight; maskRect=null; draw(); URL.revokeObjectURL(u);};
   img.src=u;
+}
+file.addEventListener('change',()=>{ srcHandle=null; loadFile(file.files[0]); });
+
+drop.addEventListener('click',async()=>{
+  if(!window.showOpenFilePicker){ file.click(); return; }
+  let h;
+  try{
+    [h] = await window.showOpenFilePicker({types:[{description:'画像',accept:{'image/*':['.png','.jpg','.jpeg','.webp','.bmp']}}]});
+  }catch(err){
+    if(err.name!=='AbortError') file.click();
+    return;
+  }
+  const f=await h.getFile();
+  srcHandle=h;
+  const dt=new DataTransfer(); dt.items.add(f); file.files=dt.files;
+  loadFile(f);
 });
+['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{
+  e.preventDefault(); e.dataTransfer.dropEffect='copy'; drop.classList.add('over');
+}));
+['dragleave','dragend'].forEach(t=>drop.addEventListener(t,()=>drop.classList.remove('over')));
+drop.addEventListener('drop',e=>{
+  e.preventDefault(); drop.classList.remove('over');
+  const item=e.dataTransfer.items && e.dataTransfer.items[0];
+  // ハンドルの取得は drop イベント中に呼ばないと無効になる
+  const handlePromise = item && item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
+  const f=e.dataTransfer.files[0];
+  if(!f || !f.type.startsWith('image/')) return;
+  // input[type=file] は単一選択なので 1 ファイルだけの FileList を作って反映させる
+  const dt=new DataTransfer(); dt.items.add(f); file.files=dt.files;
+  srcHandle=null;
+  if(handlePromise) handlePromise.then(h=>{ if(h && h.kind==='file') srcHandle=h; }).catch(()=>{});
+  loadFile(f);
+});
+// ドロップ領域以外に落とした画像をブラウザが開いてしまうのを防ぐ
+['dragover','drop'].forEach(t=>window.addEventListener(t,e=>e.preventDefault()));
 canvas.addEventListener('pointerdown',e=>{ if(!img.src) return; dragStart=pos(e); canvas.setPointerCapture(e.pointerId); });
 canvas.addEventListener('pointermove',e=>{
-  if(!dragStart) return; const p=pos(e);
-  const x=Math.min(dragStart.x,p.x), y=Math.min(dragStart.y,p.y);
-  maskRect={x,y,w:Math.max(1,Math.abs(p.x-dragStart.x)),h:Math.max(1,Math.abs(p.y-dragStart.y))}; draw();
+  if(!img.src) return;
+  const p=pos(e);
+  hover=p;
+  if(dragStart){
+    const x=Math.min(dragStart.x,p.x), y=Math.min(dragStart.y,p.y);
+    maskRect={x,y,w:Math.max(1,Math.abs(p.x-dragStart.x)),h:Math.max(1,Math.abs(p.y-dragStart.y))};
+  }
+  draw();
 });
+canvas.addEventListener('pointerleave',()=>{ hover=null; draw(); });
 canvas.addEventListener('pointerup',e=>{ dragStart=null; });
 pads.forEach(p=>p.addEventListener('input',draw));
 
 document.getElementById('copyCrop').onclick=async()=>{ if(!maskRect)return; await navigator.clipboard.writeText(cropCmd.textContent); };
 document.getElementById('reset').onclick=()=>{maskRect=null;draw();};
 
-function saveCanvas(c,name){ c.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);},'image/png'); }
+async function saveCanvas(c,name){
+  const blob=await new Promise(r=>c.toBlob(r,'image/png'));
+  if(window.showSaveFilePicker){
+    const opts={suggestedName:name,types:[{description:'PNG',accept:{'image/png':['.png']}}]};
+    // 読み込んだ画像のフォルダを保存先の初期位置にする
+    if(srcHandle) opts.startIn=srcHandle;
+    try{
+      const h=await window.showSaveFilePicker(opts);
+      const w=await h.createWritable();
+      await w.write(blob); await w.close();
+      return;
+    }catch(err){ if(err.name==='AbortError') return; }
+  }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
 
 document.getElementById('downloadMask').onclick=()=>{
   if(!maskRect)return; const c=getCrop();
