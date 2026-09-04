@@ -1,39 +1,39 @@
-@rem �������炵�� (sjis�F�����������)
+@rem うえからした (sjis認識させる呪文)
 @echo off
 chcp 932 >nul
 
 rem ==========================================================
 rem  convert_view_mp4.bat
-rem  �����ς݂� ProRes / FFV1 �Ȃǂ̃}�X�^�[��
-rem  �����p�� H.265 (HEVC / Main 10) mp4 �ɕϊ����܂��B
-rem  �G���R�[�h�� NVIDIA NVENC (hevc_nvenc) ���g�p���܂��B
-rem  ����t�@�C�������̃o�b�`�Ƀh���b�O���h���b�v���Ă��������B
-rem  �����t�@�C���̓����h���b�v�ɂ��Ή����Ă��܂��B
+rem  結合済みの ProRes / FFV1 などのマスターを
+rem  視聴用の H.265 (HEVC / Main 10) mp4 に変換します。
+rem  エンコードは NVIDIA NVENC (hevc_nvenc) を使用します。
+rem  動画ファイルをこのバッチにドラッグ＆ドロップしてください。
+rem  複数ファイルの同時ドロップにも対応しています。
 rem
-rem  �o��: <�t�@�C����>_h265.mp4
+rem  出力: <ファイル名>_h265.mp4
 rem ==========================================================
 
-rem ---- �ݒ� ------------------------------------------------
-rem MODE=cq  : �掿��B�V�[���ɂ���ăT�C�Y�͕ϓ�����
-rem MODE=vbr : BITRATE �ő_�����t�@�C���T�C�Y�ɂقڍ��킹��
+rem ---- 設定 ------------------------------------------------
+rem MODE=cq  : 画質基準。シーンによってサイズは変動する
+rem MODE=vbr : BITRATE で狙ったファイルサイズにほぼ合わせる
 set "MODE=vbr"
 
-rem CQ: �������قǍ��掿�E��T�C�Y�BWQHD/30fps �Ȃ� 22-26 ���ڈ�
+rem CQ: 小さいほど高画質・大サイズ。WQHD/30fps なら 22-26 が目安
 set "CQ=24"
 
-rem VBR �p�B1���Ԃ̓���� 7M = ��3.1GB / 9M = ��4.0GB / 11M = ��4.9GB
+rem VBR 用。1時間の動画で 7M = 約3.1GB / 9M = 約4.0GB / 11M = 約4.9GB
 set "BITRATE=9M"
 set "MAXRATE=16M"
 set "BUFSIZE=32M"
 
-rem PRESET: p1(�ő�) - p7(�ō��掿)�B�ŏI�o�͂Ȃ̂ŉ掿�D��� p7
+rem PRESET: p1(最速) - p7(最高画質)。最終出力なので画質優先で p7
 set "PRESET=p7"
-rem 10bit(Main 10)�� 8bit ���o���f�B���O���o�ɂ����A���掿�Ȃ�T�C�Y���������Ȃ�
+rem 10bit(Main 10)は 8bit よりバンディングが出にくく、同画質ならサイズも小さくなる
 set "PROFILE=main10"
 set "PIXFMT=p010le"
 
-rem �掿�⏕�I�v�V�����Bb_ref_mode / temporal-aq �� Turing ����ȍ~���K�v
-rem -g 30 ��1�b���Ƃ̃L�[�t���[���B�T�C�Y�͐�%�����邪�V�[�N�������Ȃ�
+rem 画質補助オプション。b_ref_mode / temporal-aq は Turing 世代以降が必要
+rem -g 30 は1秒ごとのキーフレーム。サイズは数%増えるがシークが速くなる
 set "EXTRA=-tune hq -rc-lookahead 32 -bf 3 -b_ref_mode middle -spatial-aq 1 -aq-strength 8 -temporal-aq 1 -g 30"
 
 set "AUDIO=-c:a aac -b:a 192k -ac 2"
@@ -41,7 +41,7 @@ rem ----------------------------------------------------------
 
 where ffmpeg >nul 2>&1
 if errorlevel 1 (
-    echo ffmpeg ��������܂���BPATH ���m�F���Ă��������B
+    echo ffmpeg が見つかりません。PATH を確認してください。
     echo.
     pause
     exit /b 1
@@ -49,15 +49,15 @@ if errorlevel 1 (
 
 ffmpeg -hide_banner -encoders 2>nul | findstr /c:"hevc_nvenc" >nul
 if errorlevel 1 (
-    echo ���� ffmpeg �� hevc_nvenc �ɑΉ����Ă��܂���B
-    echo NVENC �Ή��r���h�� ffmpeg ��p�ӂ��Ă��������B
+    echo この ffmpeg は hevc_nvenc に対応していません。
+    echo NVENC 対応ビルドの ffmpeg を用意してください。
     echo.
     pause
     exit /b 1
 )
 
 if "%~1"=="" (
-    echo ����t�@�C�������̃o�b�`�t�@�C���Ƀh���b�O���h���b�v���Ă��������B
+    echo 動画ファイルをこのバッチファイルにドラッグ＆ドロップしてください。
     echo.
     pause
     exit /b 1
@@ -69,7 +69,7 @@ set "MUX=-movflags +faststart"
 if /i "%MODE%"=="cq" (
     set "RATE=-rc vbr -cq %CQ% -b:v 0"
 ) else (
-    rem multipass �̓G���R�[�h���̂�1��ŁAGPU ������2�p�X�����̉�͂��s��
+    rem multipass はエンコード自体は1回で、GPU 内部で2パス相当の解析を行う
     set "RATE=-rc vbr -multipass fullres -cq 0 -b:v %BITRATE% -maxrate %MAXRATE% -bufsize %BUFSIZE%"
 )
 
@@ -85,7 +85,7 @@ echo  %~nx1  ^-^>  %~n1_h265.mp4   ^(NVENC / %MODE%^)
 echo ==========================================================
 
 if exist "%OUT%" (
-    echo [SKIP] �o�͐悪���ɑ��݂��܂�: %OUT%
+    echo [SKIP] 出力先が既に存在します: %OUT%
     goto next
 )
 
@@ -96,7 +96,7 @@ ffmpeg -hide_banner -loglevel warning -stats -i "%~f1" ^
 
 if errorlevel 1 (
     echo.
-    echo [ERROR] %~nx1 �̕ϊ��Ɏ��s���܂����B
+    echo [ERROR] %~nx1 の変換に失敗しました。
     set "FAILED=1"
 )
 
@@ -107,9 +107,9 @@ goto loop
 
 :done
 if defined FAILED (
-    echo �ꕔ�̃t�@�C���ŃG���[���������܂����B��̃��O���m�F���Ă��������B
+    echo 一部のファイルでエラーが発生しました。上のログを確認してください。
 ) else (
-    echo ���ׂĊ������܂����B
+    echo すべて完了しました。
 )
 echo.
 pause
