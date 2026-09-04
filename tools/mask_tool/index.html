@@ -38,9 +38,17 @@
   .range-list{margin-top:.75rem;display:flex;flex-direction:column;gap:6px}
   .range-item{display:grid;grid-template-columns:1fr auto auto auto;gap:6px;align-items:center;padding:8px;border:1px solid var(--border);border-radius:5px;background:var(--bg)}
   .range-item .meta{font-size:.9rem;color:var(--muted)}
+  .range-item.active{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
   .warn{margin-top:.6rem;padding:.55rem .7rem;border-left:3px solid #d9a441;background:color-mix(in srgb,var(--surface) 85%,#d9a441 15%)}
   .ok{margin-top:.6rem;padding:.55rem .7rem;border-left:3px solid #4caf50;background:color-mix(in srgb,var(--surface) 85%,#4caf50 15%)}
 
+  video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+  .transport{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;margin:.5rem 0}
+  .transport input[type=number]{width:110px}
+  #seek{width:100%}
+  .timeline{position:relative;height:22px;margin:.5rem 0;border:1px solid var(--border);border-radius:4px;background:var(--surface);overflow:hidden;cursor:pointer}
+  .tl-seg{position:absolute;top:0;bottom:0;background:var(--accent-bg);border-left:1px solid var(--accent);font-size:.75rem;line-height:22px;padding-left:3px;overflow:hidden;white-space:nowrap}
+  .tl-cursor{position:absolute;top:0;bottom:0;width:2px;background:#ff5252}
 </style>
 </head>
 <body>
@@ -52,13 +60,20 @@
   </select>
 </div>
 <h1>Mask Tool</h1>
-<p>1フレーム画像を読み込み、ドラッグで <b>白マスク範囲</b> を選択します。周囲余白から crop 範囲を自動計算し、FFmpeg用 crop 値と ProPainter用 mask.png を作れます。</p>
+<p>確認用動画を読み込み、フレームを送りながら <b>白マスク範囲</b> をパターンとして登録し、ロゴ位置が変わるフレームで区間を区切ります。FFmpeg用 crop 値と ProPainter用 mask.png、区間別コマンドを生成します。</p>
 
 <div class="row">
   <div class="panel">
-    <label>フレーム画像</label>
-    <div id="drop">ここに画像ファイルをドラッグ＆ドロップ（またはクリックして選択）</div>
-    <input id="file" type="file" accept="image/*" />
+    <label>プレビュー動画</label>
+    <div id="drop">ここに動画ファイルをドラッグ＆ドロップ（またはクリックして選択）</div>
+    <input id="file" type="file" accept="video/*" />
+    <div id="mediaNote" class="hint">ProRes / FFV1 はブラウザで再生できません。video\convert_view_mp4.bat で作った確認用 MP4 を使ってください。</div>
+
+    <div class="grid" style="grid-template-columns:repeat(2,minmax(120px,1fr))">
+      <div>fps<br><input id="fps" type="number" value="30" min="1" step="0.001"></div>
+      <div>総フレーム数<br><input id="totalFrames" type="number" min="1" placeholder="自動"></div>
+    </div>
+    <p class="hint">総フレーム数は video\frame_count.bat の値を入れると正確です（空なら duration×fps）。</p>
 
     <label>周囲余白 (px)</label>
     <div class="grid">
@@ -69,47 +84,86 @@
     </div>
     <label><input id="snap8" type="checkbox" checked style="width:auto"> crop の W/H を 8 の倍数にする（ProPainter の内部リサイズを避ける）</label>
 
+    <div class="range-box">
+      <h2 style="margin-top:0">処理設定 / JSON</h2>
+      <p class="hint">ここに入れた値は JSON に書き出され、video\propainter_*.bat がそのまま使います。ブラウザはファイルの実パスを取得できないので、パスは手で貼り付けてください。エクスプローラの「パスのコピー」で付く <code>"</code> は貼り付けた時点で自動的に外れます。</p>
+      <label>元動画のフルパス（ProRes など、実際に処理する方）</label>
+      <input id="sourcePath" type="text" style="width:100%;box-sizing:border-box" placeholder="C:\local\dev\sumomo\LapidaryFlow\video\prores_joined.mov">
+      <label>ProPainter フォルダ</label>
+      <input id="ppDir" type="text" style="width:100%;box-sizing:border-box" placeholder="C:\local\dev\ProPainter">
+      <label>ProPainter の python</label>
+      <input id="ppPython" type="text" style="width:100%;box-sizing:border-box" placeholder="C:\Users\xxx\miniconda3\envs\propainter\python.exe">
+      <label>ProPainter 追加オプション</label>
+      <input id="ppArgs" type="text" style="width:100%;box-sizing:border-box" value="--save_frames --fp16">
+      <div style="margin-top:.6rem">
+        <button id="savePlan">JSONを保存</button>
+        <button id="loadPlan">JSONを読込</button>
+        <input id="planFile" type="file" accept=".json,application/json" style="display:none">
+      </div>
+      <div id="planNote" class="hint"></div>
+    </div>
+
+    <div class="range-box">
+      <h2 style="margin-top:0">マスクパターン</h2>
+      <p class="hint">プレビュー上でドラッグして赤枠を決め、ロゴ位置ごとにパターン登録します。<b>パターンを選択中はドラッグと余白入力がそのパターンに即反映されます。</b>別位置のパターンを新しく作るときは先に「選択解除」を押してください。</p>
+      <div class="range-row" style="grid-template-columns:1fr auto auto">
+        <div><label>名前</label><input id="patternName" type="text" value="pattern_01"></div>
+        <button id="addPattern">現在の赤枠を登録</button>
+        <button id="deselectPattern">選択解除</button>
+      </div>
+      <div id="patternList" class="range-list"></div>
+      <button id="savePatternMasks">全パターンの crop_mask をフォルダ保存</button>
+    </div>
+
     <h2>選択結果</h2>
-    <div id="info">画像を読み込んでください。</div>
+    <div id="info">動画を読み込んでください。</div>
 
     <h3>FFmpeg crop</h3>
     <pre id="cropCmd">-</pre>
 
     <button id="copyCrop">crop値をコピー</button>
-    <button id="downloadMask">crop_mask.png を保存</button>
-    <button id="downloadFullMask">1280等の元サイズ mask.png を保存</button>
+    <button id="downloadMask">選択中の crop_mask.png を保存</button>
+    <button id="downloadFullMask">元サイズ mask.png を保存</button>
     <button id="reset">選択をリセット</button>
 
     <div class="range-box">
       <h2 style="margin-top:0">位置切替 / 区間</h2>
-      <p class="hint">ロゴ位置が途中で変わる場合、現在の赤枠をフレーム区間として登録できます。区間ごとに別 crop で処理する方法を推奨します。</p>
+      <p class="hint">プレビューを送りながら、ロゴ位置が変わるフレームで区間を区切ります。区間ごとに別 crop で処理する方が高速です。</p>
       <div class="range-row">
         <div><label>名前</label><input id="rangeName" type="text" value="segment_01"></div>
+        <div><label>パターン</label><select id="rangePattern"></select></div>
         <div><label>開始フレーム</label><input id="rangeStart" type="number" value="0" min="0"></div>
         <div><label>終了フレーム</label><input id="rangeEnd" type="number" value="299" min="0"></div>
-        <button id="addRange">現在の選択を追加</button>
       </div>
-      <div id="rangeList" class="range-list"><div class="hint">まだ区間はありません。</div></div>
-      <button id="saveRangeMasks">区間別 crop_mask をフォルダ保存</button>
+      <button id="setStart">現在フレームを開始に (I)</button>
+      <button id="setEnd">現在フレームを終了に (O)</button>
+      <button id="addRange">区間を追加</button>
+      <button id="newRange">新規入力に戻す</button>
+      <div id="rangeList" class="range-list"></div>
       <button id="copyRangeCommands">区間別コマンドをコピー</button>
       <div id="rangeNote" class="hint"></div>
       <h3>区間別コマンド</h3>
       <pre id="rangeCommands">-</pre>
     </div>
-
-    <h3>使い方</h3>
-    <pre>ffmpeg -i inputs\test.mov -vf "crop=W:H:X:Y" input\crop_frames\%%08d.png
-
-python inference_propainter.py ^
---video input\crop_frames ^
---mask input\crop_mask.png ^
---fp16</pre>
   </div>
 
   <div class="panel preview">
     <h2>プレビュー</h2>
-    <p class="hint">画像上でドラッグすると白マスク範囲を指定します。赤枠=白マスク、青枠=crop範囲。</p>
+    <p class="hint">ドラッグで白マスク範囲を指定。赤枠=白マスク、青枠=crop範囲、灰の破線=他のパターン。</p>
+    <video id="video" playsinline muted preload="auto"></video>
     <canvas id="canvas"></canvas>
+    <div class="transport">
+      <button id="playPause">再生</button>
+      <button id="back10">-10</button>
+      <button id="back1">-1</button>
+      <button id="fwd1">+1</button>
+      <button id="fwd10">+10</button>
+      <input id="frameNo" type="number" value="0" min="0">
+      <span id="frameLabel" class="hint">0 / ?</span>
+    </div>
+    <input id="seek" type="range" min="0" max="0" value="0" step="1">
+    <div id="timeline" class="timeline"></div>
+    <p class="hint">← → 1フレーム / Shift+← → 10フレーム / Space 再生・停止 / I 開始にセット / O 終了にセット</p>
   </div>
 </div>
 
@@ -120,69 +174,141 @@ theme.value = localStorage.getItem('maskToolTheme') || 'dark';
 applyTheme(theme.value);
 theme.addEventListener('change',()=>{ applyTheme(theme.value); localStorage.setItem('maskToolTheme', theme.value); });
 
-const file = document.getElementById('file');
-const drop = document.getElementById('drop');
-const canvas = document.getElementById('canvas');
+const $ = id => document.getElementById(id);
+const video = $('video');
+const canvas = $('canvas');
 const ctx = canvas.getContext('2d');
-const info = document.getElementById('info');
-const cropCmd = document.getElementById('cropCmd');
-const pads = ['padL','padT','padR','padB'].map(id=>document.getElementById(id));
-let img = new Image();
+const file = $('file');
+const drop = $('drop');
+const mediaNote = $('mediaNote');
+const info = $('info');
+const cropCmd = $('cropCmd');
+const pads = ['padL','padT','padR','padB'].map($);
+const snap8 = $('snap8');
+const fpsInput = $('fps');
+const totalInput = $('totalFrames');
+const frameNo = $('frameNo');
+const seek = $('seek');
+const frameLabel = $('frameLabel');
+const timeline = $('timeline');
+const playPause = $('playPause');
+const patternName = $('patternName');
+const patternList = $('patternList');
+const rangeName = $('rangeName');
+const rangePattern = $('rangePattern');
+const rangeStart = $('rangeStart');
+const rangeEnd = $('rangeEnd');
+const rangeList = $('rangeList');
+const rangeCommands = $('rangeCommands');
+const rangeNote = $('rangeNote');
+const planNote = $('planNote');
+const planFile = $('planFile');
+// 処理設定の入力欄 (state のキー名と対応させておく)
+const PATH_FIELDS = ['sourcePath','ppDir','ppPython','ppArgs'];
+// このうち単体のパスとして扱う欄 (ppArgs は引数列なので別扱い)
+const PATH_ONLY_FIELDS = ['sourcePath','ppDir','ppPython'];
+
+const STATE_KEY = 'maskToolState';
+const PLAN_VERSION = 1;
+let state = loadState();
+let activeId = state.patterns.length ? state.patterns[0].id : null;
 let maskRect = null;
 let dragStart = null;
 let hover = null;
 let srcHandle = null;
-let ranges = loadRanges();
-const rangeName = document.getElementById('rangeName');
-const rangeStart = document.getElementById('rangeStart');
-const rangeEnd = document.getElementById('rangeEnd');
-const rangeList = document.getElementById('rangeList');
-const rangeCommands = document.getElementById('rangeCommands');
-const rangeNote = document.getElementById('rangeNote');
-const snap8 = document.getElementById('snap8');
+let videoURL = null;
+let videoReady = false;
 
-function loadRanges(){
-  try{ const v=JSON.parse(localStorage.getItem('maskToolRanges')||'[]'); return Array.isArray(v)?v:[]; }
-  catch(e){ return []; }
+function loadState(){
+  const empty={v:2,fps:30,totalFrames:null,mediaW:0,mediaH:0,
+               sourcePath:'',ppDir:'',ppPython:'',ppArgs:'--save_frames --fp16',
+               patterns:[],ranges:[]};
+  try{
+    const s=JSON.parse(localStorage.getItem(STATE_KEY)||'null');
+    if(!s || s.v!==2) return empty;
+    return {...empty,...s,patterns:s.patterns||[],ranges:s.ranges||[]};
+  }catch(e){ return empty; }
 }
-
+// Windows のエクスプローラの「パスのコピー」は "C:\..." と引用符付きで入るので、
+// そのまま JSON に入れると二重引用符の不正な文字列になる。前後の引用符と空白を落とす
+function cleanPath(s){
+  return String(s==null?'':s).replace(/^[\s"']+/,'').replace(/[\s"']+$/,'');
+}
+// ProPainter の追加オプション用。引用符で囲まれたパスを 1 つの引数として保つ
+function splitArgs(s){
+  const out=(String(s||'').match(/"[^"]*"|'[^']*'|\S+/g)||[]);
+  return out.map(t=>/^".*"$|^'.*'$/.test(t)?t.slice(1,-1):t).filter(Boolean);
+}
+// 入力欄の値を正規化する。値が変わるときだけ書き戻してキャレットを飛ばさない
+function normalizePathField(el){
+  const v=cleanPath(el.value);
+  if(el.value!==v) el.value=v;
+  return v;
+}
+function saveState(){
+  state.fps=fps();
+  state.totalFrames=parseInt(totalInput.value||'',10)||null;
+  if(video.videoWidth){ state.mediaW=video.videoWidth; state.mediaH=video.videoHeight; }
+  for(const k of PATH_ONLY_FIELDS) state[k]=normalizePathField($(k));
+  state.ppArgs=$('ppArgs').value.trim();
+  localStorage.setItem(STATE_KEY,JSON.stringify(state));
+}
+function uid(){ return Math.random().toString(36).slice(2,9); }
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
-function getCrop(){
-  if(!maskRect) return null;
-  const [l,t,r,b] = pads.map(x=>Math.max(0,parseInt(x.value||'0',10)));
-  let x = clamp(maskRect.x-l,0,img.naturalWidth);
-  let y = clamp(maskRect.y-t,0,img.naturalHeight);
-  let x2 = clamp(maskRect.x+maskRect.w+r,0,img.naturalWidth);
-  let y2 = clamp(maskRect.y+maskRect.h+b,0,img.naturalHeight);
-  let c = {x,y,w:x2-x,h:y2-y};
-  if(snap8.checked) c = snapCrop8(c);
-  return c;
+// 動画未読込のときに canvas の既定サイズ(300×150)を拾うと crop がそのサイズに丸められてしまうので、
+// videoReady のときだけ canvas を見て、あとは前回の動画サイズを使う
+function mediaW(){ return video.videoWidth || (videoReady ? canvas.width : 0) || state.mediaW || 0; }
+function mediaH(){ return video.videoHeight || (videoReady ? canvas.height : 0) || state.mediaH || 0; }
+function currentPad(){ return pads.map(p=>Math.max(0,parseInt(p.value||'0',10))); }
+function cropOf(rect,pad){
+  if(!rect) return null;
+  const [l,t,r,b]=pad;
+  const W=mediaW()||1e6, H=mediaH()||1e6;
+  const x=clamp(rect.x-l,0,W), y=clamp(rect.y-t,0,H);
+  const x2=clamp(rect.x+rect.w+r,0,W), y2=clamp(rect.y+rect.h+b,0,H);
+  const c={x,y,w:x2-x,h:y2-y};
+  return snap8.checked ? snapCrop8(c) : c;
 }
-// ProPainter は 8 の倍数でないサイズを縮小→拡大して戻すため、あらかじめ 8 の倍数に広げる
+function getCrop(){ return cropOf(maskRect,currentPad()); }
+// ProPainter は 8 の倍数でないサイズを縮小→拡大して戻すため、あらかじめ 8 の倍数に広げる。
+// 原点も偶数に寄せる: ffmpeg の overlay は 4:2:2/4:2:0 で X を x&~1 に丸めるため、
+// crop.x が奇数だと合成時にパッチが 1px ずれる（輝度ごと動くので目視で気づきにくい）
 function snapCrop8(c){
-  const W=img.naturalWidth, H=img.naturalHeight;
-  const w=Math.min(Math.ceil(c.w/8)*8, Math.floor(W/8)*8);
-  const h=Math.min(Math.ceil(c.h/8)*8, Math.floor(H/8)*8);
-  return {x:clamp(c.x,0,W-w), y:clamp(c.y,0,H-h), w, h};
+  const W=mediaW()||1e6, H=mediaH()||1e6;
+  const x0=Math.floor(c.x/2)*2, y0=Math.floor(c.y/2)*2;
+  const w=Math.min(Math.ceil((c.x+c.w-x0)/8)*8, Math.floor(W/8)*8);
+  const h=Math.min(Math.ceil((c.y+c.h-y0)/8)*8, Math.floor(H/8)*8);
+  return {
+    x: Math.floor(clamp(x0,0,W-w)/2)*2,
+    y: Math.floor(clamp(y0,0,H-h)/2)*2,
+    w, h
+  };
 }
 function draw(){
-  if(!img.src) return;
+  if(!videoReady){ ctx.clearRect(0,0,canvas.width,canvas.height); updateInfo(); return; }
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(img,0,0);
+  try{ ctx.drawImage(video,0,0,canvas.width,canvas.height); }catch(e){}
+  const lw=Math.max(1,Math.round(mediaW()/1280));
   if(hover){
     ctx.save();
-    ctx.lineWidth=Math.max(1,Math.round(img.naturalWidth/1280));
+    ctx.lineWidth=lw;
     ctx.strokeStyle='rgba(160,160,160,.9)';
-    ctx.setLineDash([ctx.lineWidth*6, ctx.lineWidth*4]);
+    ctx.setLineDash([lw*6, lw*4]);
     ctx.beginPath();
     ctx.moveTo(hover.x,0); ctx.lineTo(hover.x,canvas.height);
     ctx.moveTo(0,hover.y); ctx.lineTo(canvas.width,hover.y);
     ctx.stroke();
     ctx.restore();
   }
+  ctx.save();
+  ctx.lineWidth=lw; ctx.setLineDash([lw*8, lw*6]); ctx.strokeStyle='rgba(190,190,190,.75)';
+  for(const p of state.patterns){
+    if(p.id!==activeId) ctx.strokeRect(p.rect.x,p.rect.y,p.rect.w,p.rect.h);
+  }
+  ctx.restore();
   if(maskRect){
     const c=getCrop();
-    ctx.lineWidth=Math.max(2,Math.round(img.naturalWidth/640));
+    ctx.lineWidth=Math.max(2,Math.round(mediaW()/640));
     ctx.strokeStyle='rgba(0,140,255,.95)';
     ctx.strokeRect(c.x,c.y,c.w,c.h);
     ctx.strokeStyle='rgba(255,0,0,.95)';
@@ -191,9 +317,14 @@ function draw(){
   updateInfo();
 }
 function updateInfo(){
-  if(!maskRect){ info.textContent='画像を読み込んで、消したい範囲をドラッグしてください。'; cropCmd.textContent='-'; return; }
+  // 読み込み失敗・未読込のときに前の動画の数値が残らないようにする
+  if(!videoReady || !maskRect){
+    info.textContent = videoReady ? 'プレビュー上で消したい範囲をドラッグしてください。' : '動画を読み込んでください。';
+    cropCmd.textContent='-';
+    return;
+  }
   const c=getCrop();
-  info.innerHTML = `元画像: ${img.naturalWidth}×${img.naturalHeight}<br>`+
+  info.innerHTML = `元動画: ${mediaW()}×${mediaH()}<br>`+
     `白マスク: X=${maskRect.x}, Y=${maskRect.y}, W=${maskRect.w}, H=${maskRect.h}<br>`+
     `crop: X=${c.x}, Y=${c.y}, W=${c.w}, H=${c.h}`;
   cropCmd.textContent = `crop=${c.w}:${c.h}:${c.x}:${c.y}`;
@@ -205,20 +336,91 @@ function pos(e){
     y: clamp(Math.round((e.clientY-r.top)*canvas.height/r.height),0,canvas.height)
   };
 }
-function loadFile(f){
-  if(!f || !f.type.startsWith('image/')) return;
-  drop.textContent = f.name;
-  const u=URL.createObjectURL(f);
-  img.onload=()=>{canvas.width=img.naturalWidth; canvas.height=img.naturalHeight; maskRect=null; draw(); URL.revokeObjectURL(u);};
-  img.src=u;
+function isVideoFile(f){
+  return !!f && (f.type.startsWith('video/') || /\.(mp4|webm|m4v|mov|mkv)$/i.test(f.name));
 }
-file.addEventListener('change',()=>{ srcHandle=null; loadFile(file.files[0]); });
+function loadVideoFile(f){
+  if(!isVideoFile(f)) return;
+  drop.textContent=f.name;
+  videoReady=false;
+  draw();
+  if(videoURL) URL.revokeObjectURL(videoURL);
+  videoURL=URL.createObjectURL(f);
+  video.src=videoURL;
+}
+video.addEventListener('loadedmetadata',()=>{
+  canvas.width=video.videoWidth;
+  canvas.height=video.videoHeight;
+  videoReady=true;
+  mediaNote.textContent=`${video.videoWidth}×${video.videoHeight} / ${video.duration.toFixed(2)}s`;
+  saveState();
+  seekFrame(0);
+  syncFrameUI();
+  renderAll();
+});
+video.addEventListener('loadeddata',draw);
+video.addEventListener('seeked',()=>{ draw(); syncFrameUI(); });
+video.addEventListener('play',()=>{ playPause.textContent='一時停止'; scheduleFrame(); });
+video.addEventListener('pause',()=>{ playPause.textContent='再生'; syncFrameUI(); });
+video.addEventListener('error',()=>{
+  videoReady=false;
+  mediaNote.innerHTML='<div class="warn">この動画はブラウザで再生できません。ProRes / FFV1 などは video\\convert_view_mp4.bat で確認用 MP4 に変換してください。</div>';
+  // 前の動画のコマが残ったままだと読み込めたように見えるので消す
+  draw();
+  syncFrameUI();
+});
+let frameLoop=false;
+function scheduleFrame(){
+  // play が続けて発火しても描画ループが二重に走らないようにする
+  if(frameLoop) return;
+  frameLoop=true;
+  const cb=()=>{
+    frameLoop=false;
+    draw(); syncFrameUI();
+    if(!video.paused && !video.ended) scheduleFrame();
+  };
+  if(video.requestVideoFrameCallback) video.requestVideoFrameCallback(cb);
+  else requestAnimationFrame(cb);
+}
+
+function fps(){ const v=parseFloat(fpsInput.value); return v>0?v:30; }
+function totalFrames(){
+  const t=parseInt(totalInput.value||'',10);
+  if(t>0) return t;
+  return (videoReady && isFinite(video.duration)) ? Math.round(video.duration*fps()) : 0;
+}
+// シーク位置はフレーム中央なので round だと 1 つ先に丸まる。
+// 最終フレームで ended になると currentTime が duration に張り付き 1 つ先を返すので総フレーム数で頭打ちにする
+function currentFrame(){
+  if(!videoReady) return 0;
+  const f=Math.max(0,Math.floor(video.currentTime*fps()+1e-6));
+  const n=totalFrames();
+  return n ? Math.min(f,n-1) : f;
+}
+// フレーム中央にシークして境界のズレを避ける
+function seekFrame(f){
+  if(!videoReady) return;
+  const max=Math.max(0,totalFrames()-1);
+  const t=(clamp(Math.round(f),0,max)+0.5)/fps();
+  video.currentTime=Math.min(t, Math.max(0,video.duration-1e-3));
+}
+function syncFrameUI(){
+  const f=currentFrame(), n=totalFrames();
+  frameNo.value=f;
+  seek.max=Math.max(0,n-1);
+  seek.value=f;
+  frameLabel.textContent=`${f} / ${n?n-1:'?'}`;
+  updateCursor();
+}
+function togglePlay(){ if(!videoReady) return; if(video.paused) video.play(); else video.pause(); }
+
+file.addEventListener('change',()=>{ srcHandle=null; loadVideoFile(file.files[0]); });
 
 drop.addEventListener('click',async()=>{
   if(!window.showOpenFilePicker){ file.click(); return; }
   let h;
   try{
-    [h] = await window.showOpenFilePicker({types:[{description:'画像',accept:{'image/*':['.png','.jpg','.jpeg','.webp','.bmp']}}]});
+    [h] = await window.showOpenFilePicker({types:[{description:'動画',accept:{'video/*':['.mp4','.webm','.m4v','.mov','.mkv']}}]});
   }catch(err){
     if(err.name!=='AbortError') file.click();
     return;
@@ -226,7 +428,7 @@ drop.addEventListener('click',async()=>{
   const f=await h.getFile();
   srcHandle=h;
   const dt=new DataTransfer(); dt.items.add(f); file.files=dt.files;
-  loadFile(f);
+  loadVideoFile(f);
 });
 ['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{
   e.preventDefault(); e.dataTransfer.dropEffect='copy'; drop.classList.add('over');
@@ -238,18 +440,20 @@ drop.addEventListener('drop',e=>{
   // ハンドルの取得は drop イベント中に呼ばないと無効になる
   const handlePromise = item && item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
   const f=e.dataTransfer.files[0];
-  if(!f || !f.type.startsWith('image/')) return;
+  // mask_plan.json をここに落とせるようにしておく
+  if(f && /\.json$/i.test(f.name)){ readPlanFile(f); return; }
+  if(!isVideoFile(f)) return;
   // input[type=file] は単一選択なので 1 ファイルだけの FileList を作って反映させる
   const dt=new DataTransfer(); dt.items.add(f); file.files=dt.files;
   srcHandle=null;
   if(handlePromise) handlePromise.then(h=>{ if(h && h.kind==='file') srcHandle=h; }).catch(()=>{});
-  loadFile(f);
+  loadVideoFile(f);
 });
-// ドロップ領域以外に落とした画像をブラウザが開いてしまうのを防ぐ
+// ドロップ領域以外に落としたファイルをブラウザが開いてしまうのを防ぐ
 ['dragover','drop'].forEach(t=>window.addEventListener(t,e=>e.preventDefault()));
-canvas.addEventListener('pointerdown',e=>{ if(!img.src) return; dragStart=pos(e); canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointerdown',e=>{ if(!videoReady) return; dragStart=pos(e); canvas.setPointerCapture(e.pointerId); });
 canvas.addEventListener('pointermove',e=>{
-  if(!img.src) return;
+  if(!videoReady) return;
   const p=pos(e);
   hover=p;
   if(dragStart){
@@ -259,12 +463,38 @@ canvas.addEventListener('pointermove',e=>{
   draw();
 });
 canvas.addEventListener('pointerleave',()=>{ hover=null; draw(); });
-canvas.addEventListener('pointerup',e=>{ dragStart=null; });
-pads.forEach(p=>p.addEventListener('input',draw));
-snap8.addEventListener('change',draw);
+canvas.addEventListener('pointerup',()=>{ dragStart=null; syncActivePattern(); renderAll(); });
+pads.forEach(p=>p.addEventListener('input',()=>{ syncActivePattern(); renderAll(); }));
+snap8.addEventListener('change',renderAll);
+[fpsInput,totalInput].forEach(el=>el.addEventListener('change',()=>{ saveState(); syncFrameUI(); renderRanges(); renderTimeline(); }));
+PATH_FIELDS.forEach(k=>$(k).addEventListener('change',saveState));
+// 貼り付けた瞬間に引用符を消して、画面の値と JSON に入る値を一致させる
+PATH_ONLY_FIELDS.forEach(k=>$(k).addEventListener('input',()=>normalizePathField($(k))));
 
-document.getElementById('copyCrop').onclick=async()=>{ if(!maskRect)return; await navigator.clipboard.writeText(cropCmd.textContent); };
-document.getElementById('reset').onclick=()=>{maskRect=null;draw();};
+playPause.onclick=togglePlay;
+$('back10').onclick=()=>seekFrame(currentFrame()-10);
+$('back1').onclick=()=>seekFrame(currentFrame()-1);
+$('fwd1').onclick=()=>seekFrame(currentFrame()+1);
+$('fwd10').onclick=()=>seekFrame(currentFrame()+10);
+frameNo.addEventListener('change',()=>seekFrame(parseInt(frameNo.value||'0',10)));
+seek.addEventListener('input',()=>seekFrame(parseInt(seek.value||'0',10)));
+timeline.addEventListener('click',e=>{
+  const n=totalFrames(); if(!n) return;
+  const r=timeline.getBoundingClientRect();
+  seekFrame((e.clientX-r.left)/r.width*n);
+});
+window.addEventListener('keydown',e=>{
+  if(/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  const step=e.shiftKey?10:1;
+  if(e.key==='ArrowLeft'){ seekFrame(currentFrame()-step); e.preventDefault(); }
+  else if(e.key==='ArrowRight'){ seekFrame(currentFrame()+step); e.preventDefault(); }
+  else if(e.code==='Space'){ togglePlay(); e.preventDefault(); }
+  else if(e.key==='i'||e.key==='I'){ rangeStart.value=String(currentFrame()); }
+  else if(e.key==='o'||e.key==='O'){ rangeEnd.value=String(currentFrame()); }
+});
+
+$('copyCrop').onclick=async()=>{ if(!maskRect||!videoReady)return; await navigator.clipboard.writeText(cropCmd.textContent); };
+$('reset').onclick=()=>{maskRect=null;draw();};
 
 function safeName(s){
   const v=(s||'segment').trim().replace(/[^a-zA-Z0-9_-]+/g,'_');
@@ -280,96 +510,376 @@ function makeMaskCanvas(rect,crop){
   return m;
 }
 
+function activePattern(){ return state.patterns.find(p=>p.id===activeId)||null; }
+function patternById(id){ return state.patterns.find(p=>p.id===id)||null; }
+function selectPattern(id){
+  activeId=id;
+  const p=activePattern();
+  if(p){ maskRect={...p.rect}; p.pad.forEach((v,i)=>pads[i].value=v); }
+  renderAll();
+}
+
+// 選択中のパターンはドラッグ／余白入力の結果をそのまま反映する（表示と生成コマンドがずれないように）
+function syncActivePattern(){
+  const p=activePattern();
+  if(!p || !maskRect) return;
+  p.rect={...maskRect};
+  p.pad=currentPad();
+  saveState();
+}
+
+$('addPattern').onclick=()=>{
+  if(!maskRect){ alert('先にプレビュー上で範囲をドラッグしてください。'); return; }
+  const p={id:uid(),name:patternName.value||`pattern_${String(state.patterns.length+1).padStart(2,'0')}`,rect:{...maskRect},pad:currentPad()};
+  state.patterns.push(p);
+  activeId=p.id;
+  patternName.value=`pattern_${String(state.patterns.length+1).padStart(2,'0')}`;
+  saveState();
+  renderAll();
+};
+
+// 選択中のまま別位置をドラッグすると既存パターンを書き換えてしまうので、新規作成前に外せるようにする
+$('deselectPattern').onclick=()=>{
+  activeId=null;
+  maskRect=null;
+  renderAll();
+};
+
+function renderPatterns(){
+  patternList.innerHTML='';
+  if(!state.patterns.length) patternList.innerHTML='<div class="hint">まだパターンはありません。</div>';
+  for(const p of state.patterns){
+    const c=cropOf(p.rect,p.pad);
+    const item=document.createElement('div');
+    item.className='range-item'+(p.id===activeId?' active':'');
+    const desc=document.createElement('div');
+    desc.innerHTML=`<b>${esc(p.name)}</b><div class="meta">mask ${p.rect.w}×${p.rect.h} @ ${p.rect.x},${p.rect.y} / crop ${c.w}×${c.h} @ ${c.x},${c.y}</div>`;
+    const use=document.createElement('button');
+    use.textContent=p.id===activeId?'選択中':'選択';
+    use.onclick=()=>selectPattern(p.id);
+    const save=document.createElement('button');
+    save.textContent='mask保存';
+    save.onclick=()=>saveCanvas(makeMaskCanvas(p.rect,c),`${safeName(p.name)}_crop_mask.png`);
+    const del=document.createElement('button');
+    del.textContent='削除';
+    del.onclick=()=>{
+      state.patterns=state.patterns.filter(x=>x.id!==p.id);
+      if(activeId===p.id){ activeId=state.patterns.length?state.patterns[0].id:null; maskRect=null; }
+      saveState(); renderAll();
+    };
+    item.append(desc,use,save,del);
+    patternList.appendChild(item);
+  }
+  const prev=rangePattern.value;
+  rangePattern.innerHTML=state.patterns.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  if(state.patterns.some(p=>p.id===prev)) rangePattern.value=prev;
+  else if(activeId) rangePattern.value=activeId;
+}
+
+$('setStart').onclick=()=>{ rangeStart.value=String(currentFrame()); };
+$('setEnd').onclick=()=>{ rangeEnd.value=String(currentFrame()); };
+
+// 「編集欄へ」で読み込んだ区間の id。セット中は追加ではなく上書きする
+let editingRangeId=null;
+function setEditingRange(id){
+  editingRangeId=id;
+  $('addRange').textContent = id ? '区間を更新' : '区間を追加';
+}
+function resetRangeForm(){
+  const last=state.ranges.length ? Math.max(...state.ranges.map(r=>r.end)) : -1;
+  rangeName.value=`segment_${String(state.ranges.length+1).padStart(2,'0')}`;
+  rangeStart.value=String(last+1);
+  rangeEnd.value=String(last+300);
+  setEditingRange(null);
+}
+$('newRange').onclick=()=>{ resetRangeForm(); renderRanges(); };
+
+$('addRange').onclick=()=>{
+  if(!state.patterns.length){ alert('先にマスクパターンを登録してください。'); return; }
+  const start=Math.max(0,parseInt(rangeStart.value||'0',10));
+  const end=Math.max(0,parseInt(rangeEnd.value||'0',10));
+  if(end<start){ alert('終了フレームは開始フレーム以上にしてください。'); return; }
+  const target=editingRangeId ? state.ranges.find(r=>r.id===editingRangeId) : null;
+  if(target){
+    target.name=rangeName.value||target.name;
+    target.start=start; target.end=end;
+    target.patternId=rangePattern.value;
+  }else{
+    state.ranges.push({
+      id:uid(),
+      name:rangeName.value||`segment_${String(state.ranges.length+1).padStart(2,'0')}`,
+      start, end,
+      patternId:rangePattern.value
+    });
+  }
+  resetRangeForm();
+  saveState();
+  renderAll();
+};
+
 function renderRanges(){
-  localStorage.setItem('maskToolRanges', JSON.stringify(ranges));
-  if(!ranges.length){
+  state.ranges.sort((a,b)=>a.start-b.start);
+  rangeList.innerHTML='';
+  if(!state.ranges.length){
     rangeList.innerHTML='<div class="hint">まだ区間はありません。</div>';
     rangeCommands.textContent='-';
     rangeNote.textContent='';
     return;
   }
-  ranges.sort((a,b)=>a.start-b.start);
-  rangeList.innerHTML='';
-  for(const [i,r] of ranges.entries()){
-    const item=document.createElement('div'); item.className='range-item';
+  for(const r of state.ranges){
+    const p=patternById(r.patternId);
+    const item=document.createElement('div');
+    item.className='range-item'+(r.id===editingRangeId?' active':'');
     const desc=document.createElement('div');
-    desc.innerHTML=`<b>${esc(r.name)}</b><div class="meta">frame ${r.start}〜${r.end} / mask ${r.rect.w}×${r.rect.h} @ ${r.rect.x},${r.rect.y} / crop ${r.crop.w}×${r.crop.h} @ ${r.crop.x},${r.crop.y}</div>`;
-    const restore=document.createElement('button'); restore.textContent='選択を復元';
-    restore.onclick=()=>{
-      maskRect={...r.rect};
-      pads[0].value=r.pad[0]; pads[1].value=r.pad[1]; pads[2].value=r.pad[2]; pads[3].value=r.pad[3];
+    desc.innerHTML=`<b>${esc(r.name)}</b><div class="meta">frame ${r.start}〜${r.end} / パターン: ${p?esc(p.name):'<未設定>'}</div>`;
+    const go=document.createElement('button');
+    go.textContent='頭出し';
+    go.onclick=()=>{ seekFrame(r.start); if(p) selectPattern(p.id); };
+    const edit=document.createElement('button');
+    edit.textContent='編集欄へ';
+    edit.onclick=()=>{
       rangeName.value=r.name; rangeStart.value=String(r.start); rangeEnd.value=String(r.end);
-      draw();
+      if(p) rangePattern.value=p.id;
+      setEditingRange(r.id);
+      renderRanges();
     };
-    const save=document.createElement('button'); save.textContent='mask保存';
-    save.onclick=()=>saveCanvas(makeMaskCanvas(r.rect,r.crop),`${safeName(r.name)}_crop_mask.png`);
-    const del=document.createElement('button'); del.textContent='削除';
-    del.onclick=()=>{ ranges.splice(i,1); renderRanges(); };
-    item.append(desc,restore,save,del); rangeList.appendChild(item);
+    const del=document.createElement('button');
+    del.textContent='削除';
+    del.onclick=()=>{
+      state.ranges=state.ranges.filter(x=>x.id!==r.id);
+      if(editingRangeId===r.id) resetRangeForm();
+      saveState(); renderAll();
+    };
+    item.append(desc,go,edit,del);
+    rangeList.appendChild(item);
   }
 
   const cmds=[];
-  for(const r of ranges){
-    const n=safeName(r.name);
-    cmds.push(`rem === ${r.name}  frame ${r.start}-${r.end} ===`);
+  cmds.push('rem このコマンドは参考用です。実処理は「JSONを保存」して');
+  cmds.push('rem video\\propainter_all.bat に mask_plan.json をドロップしてください。');
+  cmds.push('');
+  for(const r of state.ranges){
+    const p=patternById(r.patternId);
+    if(!p) continue;
+    const c=cropOf(p.rect,p.pad);
+    const n=safeName(r.name), pn=safeName(p.name);
+    cmds.push(`rem === ${r.name}  frame ${r.start}-${r.end}  (${p.name}) ===`);
     cmds.push(`mkdir input\\${n}_frames`);
-    cmds.push(`ffmpeg -i inputs\\test.mov -vf "select='between(n,${r.start},${r.end})',crop=${r.crop.w}:${r.crop.h}:${r.crop.x}:${r.crop.y}" -fps_mode passthrough input\\${n}_frames\\%%08d.png`);
+    cmds.push(`ffmpeg -i inputs\\test.mov -vf "select='between(n,${r.start},${r.end})',crop=${c.w}:${c.h}:${c.x}:${c.y}" -fps_mode passthrough input\\${n}_frames\\%%08d.png`);
     cmds.push(`python inference_propainter.py ^`);
     cmds.push(`--video input\\${n}_frames ^`);
-    cmds.push(`--mask input\\${n}_crop_mask.png ^`);
+    cmds.push(`--mask input\\${pn}_crop_mask.png ^`);
     cmds.push(`--save_frames --fp16`);
-    cmds.push(`ffmpeg -i inputs\\test.mov -framerate %FPS% -start_number 0 -i results\\${n}_frames\\frames\\%%04d.png ^`);
-    cmds.push(`-filter_complex "[0:v]select='between(n,${r.start},${r.end})',setpts=N/FRAME_RATE/TB[b];[b][1:v]overlay=${r.crop.x}:${r.crop.y}:eof_action=pass" ^`);
+    cmds.push(`ffmpeg -i inputs\\test.mov -framerate ${fps()} -start_number 0 -i results\\${n}_frames\\frames\\%%04d.png ^`);
+    cmds.push(`-filter_complex "[0:v]select='between(n,${r.start},${r.end})',setpts=N/FRAME_RATE/TB[b];[b][1:v]overlay=${c.x}:${c.y}:eof_action=pass" ^`);
     cmds.push(`-an -c:v prores_ks -profile:v 3 ${n}.mov`);
     cmds.push('');
   }
   cmds.push('rem === 連結して音声を戻す ===');
-  cmds.push('rem video\\segment_join.bat で ' + ranges.map(r=>safeName(r.name)+'.mov').join(' + ') + ' を連結し、');
+  cmds.push('rem video\\segment_join.bat で ' + state.ranges.map(r=>safeName(r.name)+'.mov').join(' + ') + ' を連結し、');
   cmds.push('rem video\\merge_tracks.py で元動画の音声/字幕を結合する。');
   rangeCommands.textContent=cmds.join('\n').trim();
 
   const issues=[];
-  for(let i=1;i<ranges.length;i++){
-    const prev=ranges[i-1], cur=ranges[i];
+  for(let i=1;i<state.ranges.length;i++){
+    const prev=state.ranges[i-1], cur=state.ranges[i];
     if(cur.start<=prev.end) issues.push(`${esc(prev.name)} と ${esc(cur.name)} のフレームが重複しています (${cur.start} ≦ ${prev.end})`);
     else if(cur.start>prev.end+1) issues.push(`${esc(prev.name)} と ${esc(cur.name)} の間に未処理フレーム ${prev.end+1}〜${cur.start-1} があります`);
   }
-  const odd=ranges.filter(r=>r.crop.w%8 || r.crop.h%8).map(r=>esc(r.name));
+  const noPattern=state.ranges.filter(r=>!patternById(r.patternId)).map(r=>esc(r.name));
+  if(noPattern.length) issues.push(`パターンが削除された区間: ${noPattern.join(', ')}`);
+  const odd=state.ranges.filter(r=>{
+    const p=patternById(r.patternId); if(!p) return false;
+    const c=cropOf(p.rect,p.pad);
+    return c.w%8 || c.h%8;
+  }).map(r=>esc(r.name));
   if(odd.length) issues.push(`crop サイズが 8 の倍数でない区間: ${odd.join(', ')}（ProPainter 内部で縮小→拡大が入ります）`);
+  const n=totalFrames();
+  const last=state.ranges[state.ranges.length-1];
+  // フレーム番号は 0 始まりなので、総フレーム数をそのまま終了フレームに入れると 1 つ多い
+  const over=state.ranges.filter(r=>n && r.end>n-1).map(r=>esc(r.name));
+  if(over.length) issues.push(
+    `終了フレームが最終フレーム ${n-1} を超えている区間: ${over.join(', ')}`+
+    `（総フレーム数 ${n} は 0 から数えるので最後は ${n-1} です）`);
+  else if(n && last.end < n-1) issues.push(`末尾に未処理フレーム ${last.end+1}〜${n-1} があります`);
   rangeNote.innerHTML = issues.length
     ? `<div class="warn">${issues.join('<br>')}</div>`
-    : '<div class="ok">区間の連続性 OK。%FPS% は元動画のフレームレートに置き換えてください。</div>';
+    : '<div class="ok">区間の連続性 OK。</div>';
 }
 
-document.getElementById('addRange').onclick=()=>{
-  if(!maskRect){ alert('先に画像上で白マスク範囲を選択してください。'); return; }
-  const start=Math.max(0,parseInt(rangeStart.value||'0',10));
-  const end=Math.max(0,parseInt(rangeEnd.value||'0',10));
-  if(end<start){ alert('終了フレームは開始フレーム以上にしてください。'); return; }
-  const c=getCrop();
-  const r={name:rangeName.value||`segment_${String(ranges.length+1).padStart(2,'0')}`,start,end,rect:{...maskRect},crop:{...c},pad:pads.map(p=>Math.max(0,parseInt(p.value||'0',10)))};
-  ranges.push(r);
-  rangeName.value=`segment_${String(ranges.length+1).padStart(2,'0')}`;
-  rangeStart.value=String(end+1);
-  rangeEnd.value=String(end+300);
-  renderRanges();
-};
+const tlCursor=document.createElement('div');
+tlCursor.className='tl-cursor';
+function renderTimeline(){
+  timeline.innerHTML='';
+  const n=totalFrames();
+  if(n){
+    for(const r of state.ranges){
+      const d=document.createElement('div');
+      d.className='tl-seg';
+      d.style.left=clamp(r.start/n*100,0,100)+'%';
+      d.style.width=clamp((r.end-r.start+1)/n*100,0.5,100)+'%';
+      d.textContent=r.name;
+      d.title=`${r.name} : ${r.start}-${r.end}`;
+      timeline.appendChild(d);
+    }
+  }
+  timeline.appendChild(tlCursor);
+  updateCursor();
+}
+function updateCursor(){
+  const n=totalFrames();
+  tlCursor.style.left = n ? clamp(currentFrame()/n*100,0,100)+'%' : '0';
+}
+function renderAll(){ renderPatterns(); renderRanges(); renderTimeline(); draw(); }
 
-document.getElementById('copyRangeCommands').onclick=async()=>{
-  if(!ranges.length) return;
+$('copyRangeCommands').onclick=async()=>{
+  if(!state.ranges.length) return;
   await navigator.clipboard.writeText(rangeCommands.textContent);
 };
 
-document.getElementById('saveRangeMasks').onclick=async()=>{
-  if(!ranges.length) return;
+// ---- JSON (mask_plan.json) ----------------------------------------------
+// video\propainter_tool.py が読む形式。crop と slug は Python 側で再計算させず
+// ここで確定させる (スナップ処理を二重実装するとズレるため)
+function buildPlan(){
+  return {
+    v: PLAN_VERSION,
+    tool: 'mask_tool',
+    created: new Date().toISOString().replace(/\.\d+Z$/,''),
+    source: cleanPath($('sourcePath').value),
+    preview: (file.files && file.files[0] ? file.files[0].name : ''),
+    fps: fps(),
+    totalFrames: totalFrames() || null,
+    mediaW: mediaW(),
+    mediaH: mediaH(),
+    snap8: snap8.checked,
+    propainter: {
+      dir: cleanPath($('ppDir').value),
+      python: cleanPath($('ppPython').value),
+      args: splitArgs($('ppArgs').value)
+    },
+    patterns: state.patterns.map(p=>({
+      id:p.id, name:p.name, slug:safeName(p.name),
+      rect:{...p.rect}, pad:[...p.pad], crop:cropOf(p.rect,p.pad)
+    })),
+    ranges: state.ranges.map(r=>({
+      id:r.id, name:r.name, slug:safeName(r.name),
+      start:r.start, end:r.end, patternId:r.patternId
+    }))
+  };
+}
+
+function planIssues(plan){
+  const out=[];
+  if(!plan.mediaW || !plan.mediaH) out.push('元動画の解像度が不明です。確認用動画を読み込んでください。');
+  if(!plan.source) out.push('元動画のフルパスが未入力です。');
+  const n=plan.totalFrames;
+  for(const r of plan.ranges){
+    if(n && r.end > n-1) out.push(`区間 ${r.slug} の終了フレーム ${r.end} が最終フレーム ${n-1} を超えています（総フレーム数 ${n} は 0 から数えるので最後は ${n-1}）`);
+  }
+  if(!plan.propainter.dir) out.push('ProPainter フォルダが未入力です。');
+  if(!plan.propainter.python) out.push('ProPainter の python が未入力です。');
+  if(!plan.patterns.length) out.push('パターンがありません。');
+  if(!plan.ranges.length) out.push('区間がありません。');
+  const slugs=new Set();
+  for(const r of plan.ranges){
+    if(slugs.has(r.slug)) out.push(`区間名が重複しています: ${r.slug}（フォルダ名が衝突します）`);
+    slugs.add(r.slug);
+  }
+  const pslugs=new Set();
+  for(const p of plan.patterns){
+    if(pslugs.has(p.slug)) out.push(`パターン名が重複しています: ${p.slug}（マスク名が衝突します）`);
+    pslugs.add(p.slug);
+  }
+  return out;
+}
+
+async function saveTextFile(text,name){
+  const blob=new Blob([text],{type:'application/json'});
+  if(window.showSaveFilePicker){
+    const opts={suggestedName:name,types:[{description:'JSON',accept:{'application/json':['.json']}}]};
+    if(srcHandle) opts.startIn=srcHandle;
+    try{
+      const h=await window.showSaveFilePicker(opts);
+      const w=await h.createWritable();
+      await w.write(blob); await w.close();
+      return true;
+    }catch(err){ if(err.name==='AbortError') return false; }
+  }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  return true;
+}
+
+$('savePlan').onclick=async()=>{
+  const plan=buildPlan();
+  const issues=planIssues(plan);
+  // 未入力でも保存はさせる (あとで手で足せる)。ただし何が足りないかは出す
+  const ok=await saveTextFile(JSON.stringify(plan,null,2),'mask_plan.json');
+  if(!ok) return;
+  planNote.innerHTML = issues.length
+    ? `<div class="warn">保存しました。ただし未入力があります:<br>${issues.map(esc).join('<br>')}</div>`
+    : '<div class="ok">mask_plan.json を保存しました。video\\propainter_all.bat にドロップしてください。</div>';
+};
+
+function applyPlan(plan){
+  if(!plan || plan.v!==PLAN_VERSION) throw new Error(`対応していない JSON です (v=${plan && plan.v})`);
+  state.fps = plan.fps || 30;
+  state.totalFrames = plan.totalFrames || null;
+  state.mediaW = plan.mediaW || 0;
+  state.mediaH = plan.mediaH || 0;
+  // 手で書き足した JSON に引用符が残っていることがあるので、読み込み時にも落とす
+  state.sourcePath = cleanPath(plan.source);
+  state.ppDir = cleanPath(plan.propainter && plan.propainter.dir);
+  state.ppPython = cleanPath(plan.propainter && plan.propainter.python);
+  state.ppArgs = ((plan.propainter && plan.propainter.args) || [])
+    .map(a=>/\s/.test(a) ? `"${a}"` : a).join(' ');
+  // crop は保存値をそのまま使わず rect+pad から引き直す (snap8 の設定に追従させる)
+  state.patterns = (plan.patterns||[]).map(p=>({id:p.id,name:p.name,rect:{...p.rect},pad:[...p.pad]}));
+  state.ranges = (plan.ranges||[]).map(r=>({id:r.id,name:r.name,start:r.start,end:r.end,patternId:r.patternId}));
+  snap8.checked = plan.snap8 !== false;
+  fpsInput.value = state.fps;
+  totalInput.value = state.totalFrames || '';
+  for(const k of PATH_FIELDS) $(k).value = state[k] || '';
+  activeId = state.patterns.length ? state.patterns[0].id : null;
+  maskRect = null;
+  setEditingRange(null);
+  saveState();
+  if(activeId) selectPattern(activeId); else renderAll();
+  syncFrameUI();
+}
+
+async function readPlanFile(f){
+  try{
+    applyPlan(JSON.parse(await f.text()));
+    planNote.innerHTML=`<div class="ok">${esc(f.name)} を読み込みました（パターン ${state.patterns.length} / 区間 ${state.ranges.length}）。</div>`;
+  }catch(err){
+    planNote.innerHTML=`<div class="warn">読み込めませんでした: ${esc(err.message)}</div>`;
+  }
+}
+
+$('loadPlan').onclick=async()=>{
+  if(!window.showOpenFilePicker){ planFile.click(); return; }
+  let h;
+  try{
+    [h]=await window.showOpenFilePicker({types:[{description:'JSON',accept:{'application/json':['.json']}}]});
+  }catch(err){
+    if(err.name!=='AbortError') planFile.click();
+    return;
+  }
+  await readPlanFile(await h.getFile());
+};
+planFile.addEventListener('change',()=>{ if(planFile.files[0]) readPlanFile(planFile.files[0]); });
+
+$('savePatternMasks').onclick=async()=>{
+  if(!state.patterns.length) return;
   if(!window.showDirectoryPicker){
-    for(const r of ranges) await saveCanvas(makeMaskCanvas(r.rect,r.crop),`${safeName(r.name)}_crop_mask.png`);
+    for(const p of state.patterns) await saveCanvas(makeMaskCanvas(p.rect,cropOf(p.rect,p.pad)),`${safeName(p.name)}_crop_mask.png`);
     return;
   }
   let dir; try{ dir=await window.showDirectoryPicker({mode:'readwrite'}); }catch(err){ if(err.name==='AbortError') return; throw err; }
-  for(const r of ranges){
-    const blob=await new Promise(res=>makeMaskCanvas(r.rect,r.crop).toBlob(res,'image/png'));
-    const fh=await dir.getFileHandle(`${safeName(r.name)}_crop_mask.png`,{create:true});
+  for(const p of state.patterns){
+    const blob=await new Promise(res=>makeMaskCanvas(p.rect,cropOf(p.rect,p.pad)).toBlob(res,'image/png'));
+    const fh=await dir.getFileHandle(`${safeName(p.name)}_crop_mask.png`,{create:true});
     const w=await fh.createWritable(); await w.write(blob); await w.close();
   }
 };
@@ -391,23 +901,29 @@ async function saveCanvas(c,name){
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 
-document.getElementById('downloadMask').onclick=()=>{
-  if(!maskRect)return; const c=getCrop();
-  const m=document.createElement('canvas'); m.width=c.w; m.height=c.h;
-  const x=m.getContext('2d'); x.fillStyle='black'; x.fillRect(0,0,m.width,m.height);
-  x.fillStyle='white'; x.fillRect(maskRect.x-c.x, maskRect.y-c.y, maskRect.w, maskRect.h);
-  saveCanvas(m,'crop_mask.png');
+$('downloadMask').onclick=()=>{
+  if(!maskRect)return;
+  // 生成コマンドが参照する名前（<パターン名>_crop_mask.png）と揃える
+  const p=activePattern();
+  saveCanvas(makeMaskCanvas(maskRect,getCrop()), p?`${safeName(p.name)}_crop_mask.png`:'crop_mask.png');
 };
 
-renderRanges();
-
-document.getElementById('downloadFullMask').onclick=()=>{
+$('downloadFullMask').onclick=()=>{
   if(!maskRect)return;
-  const m=document.createElement('canvas'); m.width=img.naturalWidth; m.height=img.naturalHeight;
+  if(!mediaW()||!mediaH()){ alert('元サイズが不明です。先に動画を読み込んでください。'); return; }
+  const m=document.createElement('canvas'); m.width=mediaW(); m.height=mediaH();
   const x=m.getContext('2d'); x.fillStyle='black'; x.fillRect(0,0,m.width,m.height);
   x.fillStyle='white'; x.fillRect(maskRect.x,maskRect.y,maskRect.w,maskRect.h);
   saveCanvas(m,'mask.png');
 };
+
+fpsInput.value=state.fps||30;
+if(state.totalFrames) totalInput.value=state.totalFrames;
+for(const k of PATH_FIELDS) if(state[k]) $(k).value=state[k];
+for(const k of PATH_ONLY_FIELDS) normalizePathField($(k));
+if(activeId) selectPattern(activeId); else renderAll();
+// 動画を読む前でも復元した総フレーム数をラベルに出す
+syncFrameUI();
 </script>
 </body>
 </html>
