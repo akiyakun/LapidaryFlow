@@ -3,25 +3,25 @@ chcp 932 >nul
 
 rem ==========================================================
 rem  segment_join.bat
-rem  Topaz“™‚Åˆ—Ï‚Ý‚ÌƒZƒOƒƒ“ƒg‚ª“ü‚Á‚½ƒtƒHƒ‹ƒ_‚ð
-rem  ‚±‚Ìƒoƒbƒ`‚Éƒhƒ‰ƒbƒO•ƒhƒƒbƒv‚·‚é‚ÆA‚Ì‚è‚µ‚ë‚ðœ‚¢‚ÄŒ‹‡‚µ‚Ü‚·B
+rem  Topazç­‰ã§å‡¦ç†æ¸ˆã¿ã®ã‚»ã‚°ãƒ¡ãƒ³ãƒˆãŒå…¥ã£ãŸãƒ•ã‚©ãƒ«ãƒ€ã‚’
+rem  ã“ã®ãƒãƒƒãƒã«ãƒ‰ãƒ©ãƒƒã‚°ï¼†ãƒ‰ãƒ­ãƒƒãƒ—ã™ã‚‹ã¨ã€ã®ã‚Šã—ã‚ã‚’é™¤ã„ã¦çµåˆã—ã¾ã™ã€‚
 rem
-rem  segment_plan.json ‚ªƒtƒHƒ‹ƒ_“à‚É–³‚¢ê‡‚ÍA
-rem  ƒtƒHƒ‹ƒ_‚Æ segment_plan.json ‚ðˆê‚Éƒhƒƒbƒv‚·‚é‚©A
-rem  Œã‚©‚ç•\Ž¦‚³‚ê‚éƒvƒƒ“ƒvƒg‚ÉƒpƒX‚ð“ü—Í‚µ‚Ä‚­‚¾‚³‚¢B
+rem  segment_plan.json ãŒãƒ•ã‚©ãƒ«ãƒ€å†…ã«ç„¡ã„å ´åˆã¯ã€
+rem  ãƒ•ã‚©ãƒ«ãƒ€ã¨ segment_plan.json ã‚’ä¸€ç·’ã«ãƒ‰ãƒ­ãƒƒãƒ—ã™ã‚‹ã‹ã€
+rem  å¾Œã‹ã‚‰è¡¨ç¤ºã•ã‚Œã‚‹ãƒ—ãƒ­ãƒ³ãƒ—ãƒˆã«ãƒ‘ã‚¹ã‚’å…¥åŠ›ã—ã¦ãã ã•ã„ã€‚
 rem ==========================================================
 
 set "SCRIPT=%~dp0segment_tool.py"
 
-rem ---- Ý’è ------------------------------------------------
-rem COPY_MODE=1 : ÄƒGƒ“ƒR[ƒh‚¹‚¸‚ÉŒ‹‡ (ProRes / FFV1 ‚È‚Ç‘SƒCƒ“ƒgƒ‰—p)
-rem COPY_MODE=0 : ENCODE_ARGS ‚ÅƒGƒ“ƒR[ƒh‚µ‚ÄŒ‹‡
+rem ---- è¨­å®š ------------------------------------------------
+rem COPY_MODE=1 : å†ã‚¨ãƒ³ã‚³ãƒ¼ãƒ‰ã›ãšã«çµåˆ (ProRes / FFV1 ãªã©å…¨ã‚¤ãƒ³ãƒˆãƒ©ç”¨)
+rem COPY_MODE=0 : ENCODE_ARGS ã§ã‚¨ãƒ³ã‚³ãƒ¼ãƒ‰ã—ã¦çµåˆ
 set "COPY_MODE=1"
 set "ENCODE_ARGS=-c:v libx264 -preset slow -crf 14 -pix_fmt yuv420p"
 rem ----------------------------------------------------------
 
 if not exist "%SCRIPT%" (
-    echo segment_tool.py ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñ:
+    echo segment_tool.py ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“:
     echo   %SCRIPT%
     echo.
     pause
@@ -29,8 +29,8 @@ if not exist "%SCRIPT%" (
 )
 
 if "%~1"=="" (
-    echo ˆ—Ï‚ÝƒZƒOƒƒ“ƒg‚ª“ü‚Á‚½ƒtƒHƒ‹ƒ_‚ð
-    echo ‚±‚Ìƒoƒbƒ`ƒtƒ@ƒCƒ‹‚Éƒhƒ‰ƒbƒO•ƒhƒƒbƒv‚µ‚Ä‚­‚¾‚³‚¢B
+    echo å‡¦ç†æ¸ˆã¿ã‚»ã‚°ãƒ¡ãƒ³ãƒˆãŒå…¥ã£ãŸãƒ•ã‚©ãƒ«ãƒ€ã‚’
+    echo ã“ã®ãƒãƒƒãƒãƒ•ã‚¡ã‚¤ãƒ«ã«ãƒ‰ãƒ©ãƒƒã‚°ï¼†ãƒ‰ãƒ­ãƒƒãƒ—ã—ã¦ãã ã•ã„ã€‚
     echo.
     pause
     exit /b 1
@@ -42,13 +42,13 @@ if not defined PY (
     where python >nul 2>&1 && set "PY=python"
 )
 if not defined PY (
-    echo Python ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñBPATH ‚ðŠm”F‚µ‚Ä‚­‚¾‚³‚¢B
+    echo Python ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚PATH ã‚’ç¢ºèªã—ã¦ãã ã•ã„ã€‚
     echo.
     pause
     exit /b 1
 )
 
-rem ---- ƒhƒƒbƒv‚³‚ê‚½€–Ú‚ðŽd•ª‚¯ --------------------------
+rem ---- ãƒ‰ãƒ­ãƒƒãƒ—ã•ã‚ŒãŸé …ç›®ã‚’ä»•åˆ†ã‘ --------------------------
 set "PROCDIR="
 set "MANIFEST="
 
@@ -64,8 +64,8 @@ goto parse
 :parsed
 
 if not defined PROCDIR (
-    echo ƒtƒHƒ‹ƒ_‚ªƒhƒƒbƒv‚³‚ê‚Ä‚¢‚Ü‚¹‚ñB
-    echo ˆ—Ï‚ÝƒZƒOƒƒ“ƒg‚ª“ü‚Á‚½ƒtƒHƒ‹ƒ_‚ðƒhƒƒbƒv‚µ‚Ä‚­‚¾‚³‚¢B
+    echo ãƒ•ã‚©ãƒ«ãƒ€ãŒãƒ‰ãƒ­ãƒƒãƒ—ã•ã‚Œã¦ã„ã¾ã›ã‚“ã€‚
+    echo å‡¦ç†æ¸ˆã¿ã‚»ã‚°ãƒ¡ãƒ³ãƒˆãŒå…¥ã£ãŸãƒ•ã‚©ãƒ«ãƒ€ã‚’ãƒ‰ãƒ­ãƒƒãƒ—ã—ã¦ãã ã•ã„ã€‚
     echo.
     pause
     exit /b 1
@@ -77,22 +77,22 @@ if not defined MANIFEST (
     if exist "%PROCDIR%\segment_plan.json" set "MANIFEST=%PROCDIR%\segment_plan.json"
 )
 
-rem set /p ‚ÌŒ‹‰Ê‚ð“¯‚¶ƒuƒƒbƒN“à‚ÅŽQÆ‚·‚é‚Æ“WŠJ‚³‚ê‚È‚¢‚½‚ß goto ‚Å•ªŠò‚·‚é
+rem set /p ã®çµæžœã‚’åŒã˜ãƒ–ãƒ­ãƒƒã‚¯å†…ã§å‚ç…§ã™ã‚‹ã¨å±•é–‹ã•ã‚Œãªã„ãŸã‚ goto ã§åˆ†å²ã™ã‚‹
 if defined MANIFEST goto have_manifest
-echo segment_plan.json ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñ‚Å‚µ‚½B
-set /p "MANIFEST=ƒpƒX‚ð“ü—Í‚·‚é‚©ƒtƒ@ƒCƒ‹‚ð‚±‚±‚Éƒhƒ‰ƒbƒO‚µ‚ÄEnter: "
+echo segment_plan.json ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã§ã—ãŸã€‚
+set /p "MANIFEST=ãƒ‘ã‚¹ã‚’å…¥åŠ›ã™ã‚‹ã‹ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ã“ã“ã«ãƒ‰ãƒ©ãƒƒã‚°ã—ã¦Enter: "
 set "MANIFEST=%MANIFEST:"=%"
 :have_manifest
 
 if not exist "%MANIFEST%" (
-    echo segment_plan.json ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñ:
+    echo segment_plan.json ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“:
     echo   %MANIFEST%
     echo.
     pause
     exit /b 1
 )
 
-rem ---- o—Íƒtƒ@ƒCƒ‹–¼‚ðŒˆ’è --------------------------------
+rem ---- å‡ºåŠ›ãƒ•ã‚¡ã‚¤ãƒ«åã‚’æ±ºå®š --------------------------------
 set "EXT="
 if "%COPY_MODE%"=="1" (
     for %%F in ("%PROCDIR%\*.mov" "%PROCDIR%\*.mkv" "%PROCDIR%\*.mp4" "%PROCDIR%\*.avi") do (
@@ -103,7 +103,7 @@ if "%COPY_MODE%"=="1" (
 )
 
 if not defined EXT (
-    echo ƒtƒHƒ‹ƒ_“à‚É“®‰æƒtƒ@ƒCƒ‹‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñ:
+    echo ãƒ•ã‚©ãƒ«ãƒ€å†…ã«å‹•ç”»ãƒ•ã‚¡ã‚¤ãƒ«ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“:
     echo   %PROCDIR%
     echo.
     pause
@@ -129,10 +129,10 @@ if "%COPY_MODE%"=="1" (
 
 if errorlevel 1 (
     echo.
-    echo [ERROR] Œ‹‡‚ÉŽ¸”s‚µ‚Ü‚µ‚½Bã‚ÌƒƒO‚ðŠm”F‚µ‚Ä‚­‚¾‚³‚¢B
+    echo [ERROR] çµåˆã«å¤±æ•—ã—ã¾ã—ãŸã€‚ä¸Šã®ãƒ­ã‚°ã‚’ç¢ºèªã—ã¦ãã ã•ã„ã€‚
 ) else (
     echo.
-    echo Š®—¹‚µ‚Ü‚µ‚½: %OUTPUT%
+    echo å®Œäº†ã—ã¾ã—ãŸ: %OUTPUT%
 )
 
 echo.
